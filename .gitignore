@@ -1,0 +1,55 @@
+# ── Dependencies ────────────────────────────────────────────
+node_modules/
+**/node_modules/
+
+# ── Environment / secrets ───────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Build output ────────────────────────────────────────────
+dist/
+**/dist/
+dist-ssr/
+build/
+**/build/
+
+# ── Test / coverage output ──────────────────────────────────
+coverage/
+**/coverage/
+
+# ── Logs ────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ── OS ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Editor ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ── Organizer-only secret (never commit or deploy) ──────────
+ORGANIZER_ANSWER_KEY.md
+
+# ── Runtime / local artifacts ───────────────────────────────
+*.local
+
+# ── Unrelated saved web pages (AWS/Wayback; not part of the app) ──
+# Confirmed unused by the codebase analysis; excluded from the repo for
+# hygiene. Files remain locally — they are not deleted.
+wb.html
+ebj.html
+ebj_wb.html
+ebj_awb.html
