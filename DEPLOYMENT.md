@@ -1,8 +1,10 @@
-# DEPLOYMENT — HexHunt 1.0 on Render (NO DOCKER)
+# DEPLOYMENT — HexHunt 1.0 on Render + Neon (NO DOCKER)
 
-Native runtimes only: a Node **Web Service** (API), two **Static Sites**
-(player, admin), and a managed **PostgreSQL**. A `render.yaml` Blueprint at the
-repo root describes all four. No Dockerfiles are used.
+Native runtimes only: a Node **Web Service** (API) and two **Static Sites**
+(player, admin) on **Render**, plus an **external PostgreSQL on Neon** (chosen to
+avoid Render Free Postgres's 30-day expiry). The `render.yaml` Blueprint
+describes the three Render services; the database is **not** provisioned by the
+Blueprint — `DATABASE_URL` is a manual secret pointing at Neon.
 
 Repo: `https://github.com/storm-buster/HexHunt-1.0.git` (branch `main`).
 
@@ -10,115 +12,169 @@ Repo: `https://github.com/storm-buster/HexHunt-1.0.git` (branch `main`).
 ```
 Player  https://<player-domain>   ──fetch(credentials)──►  API  https://<api-domain>
 Admin   https://<admin-domain>    ──fetch + WebSocket───►  API  https://<api-domain>/ws/admin
-                                                            │
+                                                            │  (TLS, public network)
                                                             ▼
-                                                 PostgreSQL (managed by Render)
+                                            Neon PostgreSQL (external, pooled)
 ```
 `*.onrender.com` subdomains are **cross-site** to each other, so the session
 cookie must be `SameSite=None; Secure` (set in the Blueprint) and everything must
-be HTTPS/WSS.
+be HTTPS/WSS. The API↔Neon link is over the public network with TLS — pick
+regions close together (see §E).
 
 ---
 
 ## A. Dev vs Production commands (do not mix)
-| Purpose | Development | Production |
+| Purpose | Development | Production (against Neon, run locally) |
 | --- | --- | --- |
 | Migrations | `npm run migrate:dev` (creates) | `npm run migrate` = `prisma migrate deploy` (applies only) |
-| Seed | `npm run seed` | `npm run seed` (once, manually; idempotent upsert) |
+| Seed | `npm run seed` | `npm run seed` (once; idempotent upsert) |
 | Admin reset | `npm run admin:reset` | `npm run admin:reset` (uses `ADMIN_PASSWORD`) |
-| Start | `npm run dev` | `node dist/server.js` (via `npm start`) |
+| Start | `npm run dev` | Render runs `node dist/server.js` (`npm start`) |
 **Never run `prisma migrate reset` or `migrate dev` against the production DB.**
+Automated tests use a separate `TEST_DATABASE_URL` — never the Neon production URL.
 
 ---
 
-## B. Render deployment procedure
+## B. Create the Neon database (one-time)
+1. Create a **Neon** account and a new **project** (choose a region near your
+   Render region — see §E).
+2. Neon creates a default branch/database. Open **Dashboard → your project →
+   Connect**.
+3. Copy the **pooled** connection string (host contains `-pooler`), which routes
+   through Neon's PgBouncer — best for a small connection budget. It already
+   includes `sslmode=require`; **keep the SSL parameters** (do not disable TLS).
+   - Example shape (DO NOT COMMIT, values are placeholders):
+     `postgresql://<user>:<password>@<endpoint>-pooler.<region>.aws.neon.tech/<db>?sslmode=require`
+   - Optional for tight pooling: append `&connection_limit=10` (Prisma honours
+     query-string pool params) and, if using the PgBouncer pooled endpoint,
+     `&pgbouncer=true`.
+4. Never place this string in `render.yaml`, Git, or `DEPLOYMENT.md`.
 
-1. **Create a Render account** and connect your GitHub account.
-2. **Connect the repository** `storm-buster/HexHunt-1.0`.
+---
+
+## C. Render deployment procedure
+1. **Render account** → connect GitHub.
+2. **Connect** `storm-buster/HexHunt-1.0`.
 3. **Blueprint deploy:** New + → *Blueprint* → pick this repo → Render reads
-   `render.yaml` and provisions: `hexhunt-db` (Postgres), `hexhunt-api` (web),
-   `hexhunt-player` (static), `hexhunt-admin` (static).
-4. **PostgreSQL** (`hexhunt-db`) is created automatically; `DATABASE_URL` is
-   injected into the API via `fromDatabase` (no manual connection string).
-5. **Backend build** runs automatically:
-   `npm ci && npm run prisma:generate && npm run build && npm run migrate`
-   (`migrate` = `prisma migrate deploy` — applies committed migrations only).
-   Start command: `node dist/server.js`. Health check: `/health`.
-6. **Set the API secrets/vars** on `hexhunt-api` (the `sync: false` ones):
+   `render.yaml` and provisions **three** services: `hexhunt-api` (web),
+   `hexhunt-player` (static), `hexhunt-admin` (static). **No database is created.**
+4. **Set `DATABASE_URL`** on `hexhunt-api` as a secret env var = the Neon pooled
+   connection string from §B. (Blueprint marks it `sync: false`.)
+5. **Set the other API secrets/vars** on `hexhunt-api`:
    - `ADMIN_EMAIL`, `ADMIN_PASSWORD` (**strong, required** — the app refuses the
      insecure default in production and fails safe if unset).
-   - `PLAYER_ORIGIN` = `https://<player-domain>`, `ADMIN_ORIGIN` = `https://<admin-domain>`.
-   - `PUBLIC_API_URL` = `https://<api-domain>` and `ARTIFACT_BASE_URL` = same.
-   `JWT_SECRET`/`COOKIE_SECRET` are auto-generated; `COOKIE_SECURE=true` and
-   `COOKIE_SAMESITE=none` are preset for cross-site.
-7. **Seed the database (one-time):** open the `hexhunt-api` service → *Shell* →
-   `npm run seed`. Idempotent (upserts admin + event + 14 challenges). Because
-   `PUBLIC_API_URL`/`ARTIFACT_BASE_URL` are now set, the seeded artifact clue URLs
-   point at the real API. (Re-run seed if you change those origins later.)
-8. **Provision/verify admin:** in the same Shell, `npm run admin:reset`
-   (sets the admin password hash from `ADMIN_PASSWORD`; prints success, never the
-   password).
-9. **CORS origins:** confirm `PLAYER_ORIGIN`/`ADMIN_ORIGIN` exactly match the
-   static site URLs (no trailing slash). They form the CORS allow-list (never `*`).
-10. **Player static site** (`hexhunt-player`): build `npm ci && npm run build`,
-    publish `dist`, SPA rewrite `/* → /index.html`. Set **`VITE_API_URL` =
-    `https://<api-domain>`** (build-time), then trigger a deploy so the bundle
-    (and its artifact clue URLs) point at the API.
-11. **Admin static site** (`hexhunt-admin`): same build/publish/rewrite. Set
-    **`VITE_API_URL` = `https://<api-domain>`**, then redeploy.
-12. **VITE_API_URL** is a *build-time* value for static sites — you must redeploy
-    the frontends after changing it.
-13. **Artifact base URL:** ensured by `PUBLIC_API_URL`/`ARTIFACT_BASE_URL` (API,
-    re-seed) and `VITE_API_URL` (frontends, rebuild). No production URL is
-    hardcoded in source.
-14. **WebSocket:** the admin client derives `wss://<api-domain>/ws/admin` from
-    `VITE_API_URL` (`https→wss`). No separate config.
-15. **Custom domains (optional):** add them in Render; then update
-    `PLAYER_ORIGIN`/`ADMIN_ORIGIN`/`PUBLIC_API_URL`/`ARTIFACT_BASE_URL`/`VITE_API_URL`
-    to the custom domains, redeploy frontends, and re-run the seed.
-16. **Verify HTTPS/WSS:** all three URLs load over HTTPS; admin WS connects (green
-    "LIVE" indicator).
-17. **Verify health:** `GET https://<api-domain>/health` → `{"status":"ok",...}`.
-18. **Verify player:** register → create team (shows join code) → second account
-    joins by code → challenges load.
-19. **Verify admin:** log in with `ADMIN_EMAIL`/`ADMIN_PASSWORD`; dashboard + live
-    leaderboard + WS log load.
-20. **Verify CTF start/close:** admin START → status LIVE; submissions accepted;
-    admin CLOSE → status CLOSED; submissions rejected; leaderboard still viewable.
-21. **Verify leaderboard:** solves appear and rank updates live.
-22. **Verify hidden level:** at T+30 (or lower `HIDDEN_LEVEL_DELAY_MINUTES` for a
-    test) exactly one member per team is selected server-side; only that member
-    can submit; +500/−400 team-wide; one attempt/team.
-23. **Verify flag leakage:** locally run `node scripts/check-flag-leakage.mjs`
-    (expected CLEAN) and confirm no `DOOM{...}` in the deployed player/admin
-    bundles.
+   - URL vars (`PLAYER_ORIGIN`, `ADMIN_ORIGIN`, `PUBLIC_API_URL`,
+     `ARTIFACT_BASE_URL`) and both static sites' `VITE_API_URL` are **auto-derived**
+     from service URLs via `fromService`/`RENDER_EXTERNAL_URL` — no manual entry.
+   - `JWT_SECRET`/`COOKIE_SECRET` are auto-generated; `COOKIE_SECURE=true` and
+     `COOKIE_SAMESITE=none` are preset for cross-site.
+6. **Backend build** runs automatically:
+   `npm ci --include=dev && npm run prisma:generate && npm run build && npm run migrate`
+   (`migrate` = `prisma migrate deploy` — applies committed migrations to Neon).
+   Start: `node dist/server.js`. Health check: `/health`.
+   > Render Free web services have **no Shell/SSH**, so the one-time **seed** is
+   > run from your local machine (§D). Startup never seeds.
+7. **Static sites** build `npm ci && npm run build`, publish `dist`, SPA rewrite
+   `/* → /index.html`; `VITE_API_URL` is injected from the API's external URL.
+8. **Verify** (see §F).
 
 ---
 
-## C. Environment variables (names only — never commit values)
-**Backend (required):** `DATABASE_URL`, `JWT_SECRET`, `COOKIE_SECRET`,
+## D. One-time production bootstrap — from your LOCAL machine (Windows PowerShell)
+Render Free has no Shell, so initialise Neon from your machine. The env vars
+below exist **only for the current PowerShell session** — they are not saved and
+must never be committed. Use the **real** Neon URL and a **strong** password.
+
+```powershell
+cd D:\ctf-main\ctf-main\server
+
+# Session-only variables (replace placeholders; do NOT paste real secrets into any file)
+$env:DATABASE_URL   = "<NEON_POOLED_CONNECTION_STRING>"
+$env:ADMIN_EMAIL    = "admin@doomsday.ctf"
+$env:ADMIN_PASSWORD = "<STRONG_PRODUCTION_PASSWORD>"
+# So the seeded challenge artifact URLs point at the deployed API:
+$env:PUBLIC_API_URL = "https://<api-domain>"
+
+npm run migrate        # prisma migrate deploy → applies committed migrations to Neon
+npm run seed           # idempotent: event + 14 challenges + admin (from ADMIN_EMAIL/PASSWORD)
+npm run admin:reset    # (re)sets the admin password hash from ADMIN_PASSWORD; verifies it
+```
+Notes:
+- `npm run seed` / `admin:reset` are **idempotent upserts** — re-running does not
+  wipe users, teams, memberships, submissions, solves, or scores; it only ensures
+  the event exists, upserts the 14 challenge records, and sets the admin.
+- The commands print a **masked** DB host only — never the URL, password, or hash.
+- Close the terminal (or `Remove-Item Env:DATABASE_URL, Env:ADMIN_PASSWORD`) when
+  done so the secrets don't linger in the session.
+- Obtain the External DB URL from **Neon → Connect** (§B) — not from Render.
+
+---
+
+## E. Regions & latency (external DB)
+The API (Render) and DB (Neon) communicate over the **public internet** with TLS,
+so pick a **Neon region closest to your Render region** to minimise round-trip
+latency, e.g.:
+- Render **Oregon** ↔ Neon **AWS us-west-2**
+- Render **Ohio** ↔ Neon **AWS us-east-* / us-east-2**
+- Render **Frankfurt** ↔ Neon **AWS eu-central-1**
+- Render **Singapore** ↔ Neon **AWS ap-southeast-1**
+
+Verify actual region availability in each provider's dashboard (do not assume).
+Measure latency after deploy; if cross-region latency is high, relocate the Neon
+project (or the Render service) to align regions.
+
+---
+
+## F. Verification
+1. HTTPS/WSS: all three URLs load over HTTPS; admin WS shows "LIVE".
+2. Health: `GET https://<api-domain>/health` → `{"status":"ok",...}`.
+3. Admin: log in with `ADMIN_EMAIL`/`ADMIN_PASSWORD`; dashboard + leaderboard + WS load.
+4. Player: register → create team (shows join code) → second account joins → challenges load.
+5. CTF start/close: START → LIVE (submissions accepted); CLOSE → CLOSED (rejected; leaderboard viewable).
+6. Hidden level: at T+30 exactly one member/team is selected server-side; only they submit; +500/−400; one attempt/team.
+7. Flag leakage: `node scripts/check-flag-leakage.mjs` → CLEAN; no `DOOM{...}` in deployed bundles.
+
+---
+
+## G. Environment variables (names only — never commit values)
+**Backend (required):** `DATABASE_URL` (Neon pooled), `JWT_SECRET`, `COOKIE_SECRET`,
 `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `PLAYER_ORIGIN`, `ADMIN_ORIGIN`,
-`NODE_ENV=production`, `COOKIE_SECURE=true`, `COOKIE_SAMESITE=none` (cross-site).
-**Backend (recommended):** `PUBLIC_API_URL` and/or `ARTIFACT_BASE_URL`, `HOST=0.0.0.0`.
+`NODE_ENV=production`, `COOKIE_SECURE=true`, `COOKIE_SAMESITE=none`.
+**Backend (recommended):** `PUBLIC_API_URL`/`ARTIFACT_BASE_URL`, `HOST=0.0.0.0`.
 `PORT` is injected by Render — do not hardcode.
 **Backend (optional tuning):** `JWT_EXPIRES_IN`, `ADMIN_NAME`, `EVENT_NAME`,
-`SCORING_DECAY_STEP_MINUTES/PERCENT`, `SCORING_FLOOR_PERCENT`, `HIDDEN_REWARD`,
-`HIDDEN_PENALTY`, `HIDDEN_LEVEL_DELAY_MINUTES`, `SUBMIT_RATE_MAX`,
-`SUBMIT_RATE_WINDOW_SECONDS`, `LOG_LEVEL`.
-**Frontends (build-time):** `VITE_API_URL` (player + admin).
-Secrets live only in Render env / `server/.env` (git-ignored) — never in source,
-`render.yaml`, API responses, or logs (auth headers/cookies are redacted).
+`SCORING_*`, `HIDDEN_REWARD`, `HIDDEN_PENALTY`, `HIDDEN_LEVEL_DELAY_MINUTES`,
+`SUBMIT_RATE_MAX`, `SUBMIT_RATE_WINDOW_SECONDS`, `LOG_LEVEL`.
+**Frontends (build-time):** `VITE_API_URL` (auto-derived in the Blueprint).
+Secrets live only in Render env / Neon / local session / `server/.env`
+(git-ignored) — never in source, `render.yaml`, API responses, or logs
+(auth headers/cookies are redacted).
 
 ---
 
-## D. Runtime / persistence notes
-- **PostgreSQL is the only source of truth.** No critical CTF state (event start,
-  scores, solves, hidden assignments/results) lives on the web-service filesystem.
-- **Restart-safe:** `event.startedAt` and `hiddenActivationAt` persist in the DB.
-  The 5-second in-memory ticker is only a convenience — on restart it resumes and
-  flips activation lazily from DB state; member assignments are created once and
-  guarded by `HiddenLevelAssignment @@unique([teamId,eventId])`, so activation
-  cannot double-run and scores cannot double-award.
+## H. Capacity & connection pooling (~80 players / ~27 teams)
+- **One Prisma client per backend instance** (module singleton in
+  `src/db/prisma.ts`) → one connection pool, reused across all requests (never a
+  connection per request). Render Free runs a single instance.
+- **Use the Neon POOLED endpoint** (PgBouncer) so many short DB operations share a
+  small server-side connection budget — ideal for Neon Free. Optionally cap the
+  Prisma pool with `&connection_limit=10` in `DATABASE_URL`.
+- Hot paths are indexed already: `User.email` (unique), `TeamMembership.userId`
+  (unique) + `teamId`, `Solve @@unique([teamId,challengeId])` + indexes,
+  `Submission` indexes (`eventId/teamId/challengeId/submittedAt`),
+  `HiddenLevelAssignment @@unique([teamId,eventId])`, `HiddenLevelResult.teamId`
+  (unique), `Challenge` indexes. No new indexes are required for this scale.
+- Leaderboard/statistics aggregate in-process from indexed reads; fine for ~27
+  teams. The 5-second hidden-activation ticker issues one lightweight query.
+
+---
+
+## I. Runtime / persistence notes
+- **PostgreSQL (Neon) is the only source of truth.** No critical CTF state lives
+  on the Render filesystem; **no persistent disk** is required.
+- **Restart-safe:** `event.startedAt` and `hiddenActivationAt` persist in the DB;
+  the in-memory ticker re-derives activation from DB state after a restart, and
+  `HiddenLevelAssignment @@unique([teamId,eventId])` prevents double activation /
+  double award.
 - **WebSocket** carries no authoritative data; the admin dashboard reconnects
-  (backoff + ping/pong) and re-fetches current state via REST after any restart.
-- **No persistent disk** is required.
+  (backoff + ping/pong) and re-fetches state via REST after any restart.

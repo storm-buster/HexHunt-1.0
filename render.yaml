@@ -9,12 +9,11 @@
 #
 # NOTE: verify field names against the current Render Blueprint reference before
 # applying; Render occasionally renames keys (e.g. env ↔ runtime).
-
-databases:
-  - name: hexhunt-db
-    databaseName: hexhunt
-    user: hexhunt
-    plan: free
+#
+# DATABASE: HexHunt uses an EXTERNAL PostgreSQL (Neon) to avoid Render Free
+# Postgres's 30-day expiry. No database is provisioned by this Blueprint —
+# DATABASE_URL is a manual secret (see DEPLOYMENT.md). Use Neon's POOLED
+# connection string (…-pooler host) with sslmode=require.
 
 services:
   # ── Backend API (Fastify + Prisma) ────────────────────────
@@ -36,10 +35,11 @@ services:
       - key: HOST
         value: 0.0.0.0
       # PORT is injected by Render automatically; do not hardcode.
+      # External PostgreSQL (Neon). Set this manually in the Render dashboard as a
+      # secret — NEVER commit the connection string. Prefer Neon's POOLED URL
+      # (…-pooler) with sslmode=require. Do not disable TLS verification.
       - key: DATABASE_URL
-        fromDatabase:
-          name: hexhunt-db
-          property: connectionString
+        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: COOKIE_SECRET
