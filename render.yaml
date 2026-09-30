@@ -23,7 +23,11 @@ services:
     runtime: node
     plan: free
     rootDir: server
-    buildCommand: npm ci && npm run prisma:generate && npm run build && npm run migrate
+    # NODE_ENV=production makes npm omit devDependencies, but the build toolchain
+    # (typescript, @types/node, prisma CLI) lives in devDependencies — so the
+    # build must force them in with --include=dev. Runtime (npm start) only needs
+    # regular dependencies.
+    buildCommand: npm ci --include=dev && npm run prisma:generate && npm run build && npm run migrate
     startCommand: node dist/server.js
     healthCheckPath: /health
     envVars:
