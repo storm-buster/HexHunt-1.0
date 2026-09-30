@@ -9,7 +9,8 @@ export type RealtimeEventType =
   | 'SCORE_UPDATED'
   | 'LEADERBOARD_UPDATED'
   | 'HIDDEN_LEVEL_ACTIVATED'
-  | 'HIDDEN_LEVEL_RESULT';
+  | 'HIDDEN_LEVEL_RESULT'
+  | 'TEAM_CHALLENGE_SOLVED';
 
 export interface RealtimeMessage {
   type: RealtimeEventType;
@@ -17,12 +18,18 @@ export interface RealtimeMessage {
   ts?: string;
 }
 
-// In-process fan-out hub. For a single-node deployment this is sufficient;
-// a multi-node deployment would back this with Redis pub/sub.
-const clients = new Set<WebSocket>();
+interface ClientMeta {
+  role: 'ADMIN' | 'PLAYER';
+  teamId?: string; // players only — resolved server-side from the session
+}
 
-export function addClient(socket: WebSocket): void {
-  clients.add(socket);
+// In-process fan-out hub. Admin sockets receive the global admin channel;
+// player sockets are subscribed only to their own team. Single-node only; a
+// multi-node deployment would back this with Redis pub/sub.
+const clients = new Map<WebSocket, ClientMeta>();
+
+export function addClient(socket: WebSocket, meta: ClientMeta): void {
+  clients.set(socket, meta);
 }
 
 export function removeClient(socket: WebSocket): void {
@@ -33,14 +40,38 @@ export function clientCount(): number {
   return clients.size;
 }
 
+export function adminClientCount(): number {
+  let n = 0;
+  for (const meta of clients.values()) if (meta.role === 'ADMIN') n++;
+  return n;
+}
+
+function sendTo(socket: WebSocket, data: string): void {
+  try {
+    if (socket.readyState === socket.OPEN) socket.send(data);
+  } catch {
+    clients.delete(socket);
+  }
+}
+
+function serialize(message: RealtimeMessage): string {
+  return JSON.stringify({ ...message, ts: message.ts ?? new Date().toISOString() });
+}
+
+// Admin channel — every ADMIN socket receives it (unchanged admin behaviour).
 export function broadcast(message: RealtimeMessage): void {
-  const data = JSON.stringify({ ...message, ts: message.ts ?? new Date().toISOString() });
-  for (const socket of clients) {
-    try {
-      if (socket.readyState === socket.OPEN) socket.send(data);
-    } catch {
-      // Drop broken sockets silently; cleanup happens on close event.
-      clients.delete(socket);
-    }
+  const data = serialize(message);
+  for (const [socket, meta] of clients) {
+    if (meta.role === 'ADMIN') sendTo(socket, data);
+  }
+}
+
+// Team channel — only sockets subscribed to `teamId` (that team's players).
+// Admins are not team-scoped, so this never leaks a team's events to admins or
+// to other teams.
+export function broadcastToTeam(teamId: string, message: RealtimeMessage): void {
+  const data = serialize(message);
+  for (const [socket, meta] of clients) {
+    if (meta.teamId === teamId) sendTo(socket, data);
   }
 }

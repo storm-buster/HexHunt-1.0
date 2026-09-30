@@ -9,6 +9,8 @@ import {
 } from 'react'
 import { challenges, type ChallengeData, type Stone, type Universe } from '../data/challenges'
 import { api, ApiError } from '../api/client'
+import { TeamSocket } from '../api/teamSocket'
+import { applyTeamChallengeSolved } from '../state/teamSolve'
 
 // ── Types ───────────────────────────────────────────────────
 interface Participant {
@@ -204,6 +206,37 @@ export function GameProvider({ children }: { children: ReactNode }) {
   }, [state.authenticated, state.team])
 
   const refresh = useCallback(() => loadAll(), [loadAll])
+
+  // Player realtime team channel — team-wide solves appear instantly (no reload).
+  // Additive to the existing API hydration: initial state comes from loadAll();
+  // this only pushes live updates and triggers an authoritative resync.
+  const teamId = state.team?.id
+  useEffect(() => {
+    if (!state.authenticated || !teamId) return
+    const socket = new TeamSocket((msg) => {
+      if (msg?.type === 'TEAM_CHALLENGE_SOLVED' && msg.payload?.challengeId) {
+        const { challengeId, teamScore } = msg.payload as { challengeId: string; teamScore?: number }
+        // Optimistic, idempotent local update for instant feedback…
+        setState((s) => {
+          const applied = applyTeamChallengeSolved(s.server, s.score, { challengeId, teamScore })
+          const progress = {
+            ...s.progress,
+            [challengeId]: {
+              ...(s.progress[challengeId] ?? { solved: false, attempts: 0, hintsUsed: 0 }),
+              solved: true,
+            },
+          }
+          return { ...s, server: applied.server, score: applied.score, progress }
+        })
+        // …then authoritative full resync (unlock next challenge, stones, score).
+        void loadAll()
+      }
+    })
+    // On reconnect (after a drop), re-sync authoritative state; no stale UI.
+    socket.onStatus = (_connected, reconnected) => { if (reconnected) void loadAll() }
+    socket.connect()
+    return () => socket.close()
+  }, [state.authenticated, teamId, loadAll])
 
   const login = useCallback(async (email: string, password: string) => {
     await api.login(email, password)

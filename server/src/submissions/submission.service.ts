@@ -5,7 +5,8 @@ import { verifySecret } from '../auth/password.js';
 import { requireEvent, assertLive } from '../events/event.service.js';
 import { assertChallengeAccessible } from '../challenges/challenge.service.js';
 import { computeAwardedPoints, elapsedSecondsSince } from '../scoring/scoring.service.js';
-import { broadcast } from '../realtime/hub.js';
+import { broadcast, broadcastToTeam } from '../realtime/hub.js';
+import { getTeamScore } from '../leaderboard/leaderboard.service.js';
 
 export type SubmitOutcome =
   | { result: 'CORRECT'; awardedPoints: number; challengeId: string }
@@ -88,6 +89,7 @@ export async function processSubmission(input: SubmitInput): Promise<SubmitOutco
     throw e;
   }
 
+  // Admin channel (all teams) — unchanged.
   broadcast({
     type: 'CHALLENGE_SOLVED',
     payload: {
@@ -99,6 +101,16 @@ export async function processSubmission(input: SubmitInput): Promise<SubmitOutco
   });
   broadcast({ type: 'SCORE_UPDATED', payload: { teamId: input.teamId } });
   broadcast({ type: 'LEADERBOARD_UPDATED' });
+
+  // Team channel — notify only THIS team's connected players so their UI marks
+  // the challenge solved without a reload. Emitted once, only for the actual
+  // newly-created solve (the race loser threw ALREADY_SOLVED above). Carries the
+  // authoritative team score; contains no flag/answer or other team's data.
+  const teamScore = await getTeamScore(input.teamId);
+  broadcastToTeam(input.teamId, {
+    type: 'TEAM_CHALLENGE_SOLVED',
+    payload: { challengeId: input.challengeId, scoreAwarded: awardedPoints, teamScore },
+  });
 
   return { result: 'CORRECT', awardedPoints, challengeId: input.challengeId };
 }
