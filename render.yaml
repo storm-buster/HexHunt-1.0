@@ -1,0 +1,115 @@
+# Render Blueprint for HexHunt 1.0 — NO DOCKER (native runtimes).
+# Deploy via Render → "New +" → "Blueprint" → connect this repo.
+# Secrets are NOT stored here: generated (JWT/COOKIE) or entered in the
+# dashboard (sync: false). Fill the sync:false vars after the first deploy once
+# the service URLs are known, then trigger a redeploy of the frontends.
+#
+# NOTE: verify field names against the current Render Blueprint reference before
+# applying; Render occasionally renames keys (e.g. env ↔ runtime).
+
+databases:
+  - name: hexhunt-db
+    databaseName: hexhunt
+    user: hexhunt
+    plan: free
+
+services:
+  # ── Backend API (Fastify + Prisma) ────────────────────────
+  - type: web
+    name: hexhunt-api
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm ci && npm run prisma:generate && npm run build && npm run migrate
+    startCommand: node dist/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      # PORT is injected by Render automatically; do not hardcode.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hexhunt-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: COOKIE_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: "28800"
+      - key: COOKIE_SECURE
+        value: "true"
+      # onrender.com subdomains are cross-site → cookie must be SameSite=None.
+      - key: COOKIE_SAMESITE
+        value: none
+      # Enter after first deploy (the static site URLs):
+      - key: PLAYER_ORIGIN
+        sync: false
+      - key: ADMIN_ORIGIN
+        sync: false
+      # Public origin of THIS API (e.g. https://hexhunt-api.onrender.com) — used
+      # to build challenge artifact URLs. Set it, then re-run the seed.
+      - key: PUBLIC_API_URL
+        sync: false
+      - key: ARTIFACT_BASE_URL
+        sync: false
+      # Admin credentials — REQUIRED in production (no default). Enter in dashboard.
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_NAME
+        value: HexHunt Admin
+      - key: EVENT_NAME
+        value: HexHunt 1.0
+      # Optional tuning (code defaults apply if omitted):
+      - key: HIDDEN_LEVEL_DELAY_MINUTES
+        value: "30"
+      - key: HIDDEN_REWARD
+        value: "500"
+      - key: HIDDEN_PENALTY
+        value: "400"
+      - key: SCORING_DECAY_STEP_MINUTES
+        value: "15"
+      - key: SCORING_DECAY_STEP_PERCENT
+        value: "10"
+      - key: SCORING_FLOOR_PERCENT
+        value: "25"
+      - key: SUBMIT_RATE_MAX
+        value: "10"
+      - key: SUBMIT_RATE_WINDOW_SECONDS
+        value: "60"
+
+  # ── Player frontend (static SPA) ──────────────────────────
+  - type: web
+    name: hexhunt-player
+    runtime: static
+    rootDir: .
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Build-time API origin (baked into the static bundle). Set to the API URL.
+      - key: VITE_API_URL
+        sync: false
+
+  # ── Admin dashboard (static SPA) ──────────────────────────
+  - type: web
+    name: hexhunt-admin
+    runtime: static
+    rootDir: admin-dashboard
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # WebSocket URL is derived from this (http→ws, https→wss) by the client.
+      - key: VITE_API_URL
+        sync: false

@@ -32,6 +32,7 @@ function list(name: string, fallback: string[]): string[] {
 }
 
 const isTest = process.env.NODE_ENV === 'test';
+const isProd = process.env.NODE_ENV === 'production';
 
 export const config = {
   env: process.env.NODE_ENV ?? 'development',
@@ -63,10 +64,21 @@ export const config = {
   adminOrigin: list('ADMIN_ORIGIN', ['http://localhost:5174']),
 
   admin: {
-    email: process.env.ADMIN_EMAIL ?? 'admin@doomsday.ctf',
-    password: process.env.ADMIN_PASSWORD ?? 'ChangeMe_Admin123!',
+    // No predictable production fallback: in production these MUST come from the
+    // environment. Empty string in prod → seed/admin:reset fail safely rather
+    // than creating a guessable default admin.
+    email: process.env.ADMIN_EMAIL ?? (isProd ? '' : 'admin@doomsday.ctf'),
+    password: process.env.ADMIN_PASSWORD ?? (isProd ? '' : 'ChangeMe_Admin123!'),
     name: process.env.ADMIN_NAME ?? 'Doctor Doom',
   },
+
+  // Public origin used to build challenge artifact URLs embedded in clues.
+  // Defaults to the local API; set to the deployed API origin in production
+  // (then re-seed). Frontends build their own artifact URLs from VITE_API_URL.
+  artifactBaseUrl:
+    process.env.ARTIFACT_BASE_URL ??
+    process.env.PUBLIC_API_URL ??
+    `http://localhost:${int('PORT', 4000)}`,
 
   eventName: process.env.EVENT_NAME ?? 'Avengers: Doomsday CTF',
 

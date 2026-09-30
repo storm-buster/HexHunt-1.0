@@ -10,6 +10,12 @@ async function main(): Promise<void> {
 
   // ── Admin (credentials from environment only) ─────────────
   const adminEmail = config.admin.email.trim().toLowerCase();
+  if (!adminEmail || !config.admin.password) {
+    throw new Error('ADMIN_EMAIL and ADMIN_PASSWORD must be set to seed the admin account');
+  }
+  if (config.isProd && config.admin.password === 'ChangeMe_Admin123!') {
+    throw new Error('Refusing to seed the insecure default admin password in production — set a strong ADMIN_PASSWORD');
+  }
   const adminHash = await hashPassword(config.admin.password);
   await prisma.user.upsert({
     where: { email: adminEmail },

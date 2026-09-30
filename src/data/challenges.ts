@@ -8,6 +8,16 @@
 // fields only).
 // ============================================================
 
+import { API_BASE } from '../api/client'
+
+// Artifact URLs are built from the configured API origin (VITE_API_URL at build
+// time) — no production URL is hardcoded. Webverse clues hex-encode the URL (the
+// intended decode step); OSINT clues show it as plaintext. In local dev this
+// resolves to http://localhost:4000 exactly as before.
+const artifactUrl = (path: string): string => `${API_BASE}${path}`
+const hexBytes = (s: string): string =>
+  Array.from(new TextEncoder().encode(s)).map((b) => b.toString(16).padStart(2, '0')).join(' ')
+
 export type ChallengeCategory =
   | 'web' | 'osint' | 'forensics' | 'crypto' | 'steganography'
   | 'pcap' | 'reverse' | 'pwn' | 'static' | 'custom' | 'decoder' | 'interactive'
@@ -59,7 +69,7 @@ const webverseChallenges: ChallengeData[] = [
       'The registry lists several nodes. Authorisation depends on WHO and WHERE the briefing points to — not on the order they appear.',
     ],
     type: 'static',
-    clueContent: { label: '<!-- SOURCE COMMENT -->', body: '<!-- GATEWAY DEBUG: override registry trace =\n68 74 74 70 3a 2f 2f 6c 6f 63 61 6c 68 6f 73 74 3a 34 30 30 30 2f 61 72 74 69 66 61 63 74 73 2f 77 76 2d 30 31 2f 37 66 33 61 39 63 32 65\n— decode to continue. — J.R. -->', format: 'code' },
+    clueContent: { label: '<!-- SOURCE COMMENT -->', body: `<!-- GATEWAY DEBUG: override registry trace =\n${hexBytes(artifactUrl('/artifacts/wv-01/7f3a9c2e'))}\n— decode to continue. — J.R. -->`, format: 'code' },
     stone: 'mind', points: 100, author: 'Nick Fury',
   },
   {
@@ -74,7 +84,7 @@ const webverseChallenges: ChallengeData[] = [
       'Endpoints answer differently. A loop is not an exit — judge each endpoint by how it responds.',
     ],
     type: 'custom',
-    clueContent: { label: 'CHAIN LOG', body: 'REDIRECT TRACE (follow the map):\n68 74 74 70 3a 2f 2f 6c 6f 63 61 6c 68 6f 73 74 3a 34 30 30 30 2f 61 72 74 69 66 61 63 74 73 2f 77 76 2d 30 32 2f 62 31 64 38 34 66 36 30\nSTATUS: 308 Permanent Redirect (loop)\nX-Multiverse-Warning: "The exit answers 200."', format: 'metadata' },
+    clueContent: { label: 'CHAIN LOG', body: `REDIRECT TRACE (follow the map):\n${hexBytes(artifactUrl('/artifacts/wv-02/b1d84f60'))}\nSTATUS: 308 Permanent Redirect (loop)\nX-Multiverse-Warning: "The exit answers 200."`, format: 'metadata' },
     stone: 'space', points: 150, author: 'Strange',
   },
   {
@@ -89,7 +99,7 @@ const webverseChallenges: ChallengeData[] = [
       'Several tokens exist. Validity depends on matching the gate\'s realm AND still being live — not every candidate qualifies.',
     ],
     type: 'interactive',
-    clueContent: { label: 'HTTP RESPONSE HEADERS', body: 'Content-Type: application/json\nServer: Multiverse-Gateway/2.0\nWWW-Authenticate: Bearer realm="multiverse"\nX-Trace: 68 74 74 70 3a 2f 2f 6c 6f 63 61 6c 68 6f 73 74 3a 34 30 30 30 2f 61 72 74 69 66 61 63 74 73 2f 77 76 2d 30 33 2f 34 65 39 61 37 63 31 33', format: 'metadata' },
+    clueContent: { label: 'HTTP RESPONSE HEADERS', body: `Content-Type: application/json\nServer: Multiverse-Gateway/2.0\nWWW-Authenticate: Bearer realm="multiverse"\nX-Trace: ${hexBytes(artifactUrl('/artifacts/wv-03/4e9a7c13'))}`, format: 'metadata' },
     stone: 'reality', points: 200, author: 'Romanoff',
   },
 ]
@@ -107,7 +117,7 @@ const osintverseChallenges: ChallengeData[] = [
       'The dossier holds several places. Let the intercepted location decide which record matters — match it, don\'t trust the label.',
     ],
     type: 'decoder',
-    clueContent: { label: 'INTERCEPTED SIGNAL', body: 'LAT: 28.6129\nLON: 77.2295\nTRANSMISSION: "I was here. Standing under the arch."\nINTEL DOSSIER: http://localhost:4000/artifacts/os-01/c72f0a95', format: 'code' },
+    clueContent: { label: 'INTERCEPTED SIGNAL', body: `LAT: 28.6129\nLON: 77.2295\nTRANSMISSION: "I was here. Standing under the arch."\nINTEL DOSSIER: ${artifactUrl('/artifacts/os-01/c72f0a95')}`, format: 'code' },
     stone: 'power', points: 120, author: 'Fury',
   },
   {
@@ -122,7 +132,7 @@ const osintverseChallenges: ChallengeData[] = [
       'The anchor is the earliest, verified identity; impersonators arrive later and unverified.',
     ],
     type: 'static',
-    clueContent: { label: 'SOCIAL POST METADATA', body: 'DISPLAY NAME: "Natasha R."\nHANDLE SEEN: @n4t4sh4_r0m4n0ff\nNOTE: multiple impersonators detected.\nSOCIAL ARCHIVE: http://localhost:4000/artifacts/os-02/18d3b6e4', format: 'code' },
+    clueContent: { label: 'SOCIAL POST METADATA', body: `DISPLAY NAME: "Natasha R."\nHANDLE SEEN: @n4t4sh4_r0m4n0ff\nNOTE: multiple impersonators detected.\nSOCIAL ARCHIVE: ${artifactUrl('/artifacts/os-02/18d3b6e4')}`, format: 'code' },
     stone: 'soul', points: 130, author: 'Widow',
   },
   {
@@ -137,7 +147,7 @@ const osintverseChallenges: ChallengeData[] = [
       'Only one page is both untampered and validated; the others advertise their own doubt.',
     ],
     type: 'forensics',
-    clueContent: { label: 'IMAGE PIXEL ANALYSIS', body: 'IMG: classified-doc.png (1024x1024)\nRECOVERY NOTE: several pages recovered; most are forgeries.\nRECOVERY ARCHIVE: http://localhost:4000/artifacts/os-03/9f5c2a70', format: 'code' },
+    clueContent: { label: 'IMAGE PIXEL ANALYSIS', body: `IMG: classified-doc.png (1024x1024)\nRECOVERY NOTE: several pages recovered; most are forgeries.\nRECOVERY ARCHIVE: ${artifactUrl('/artifacts/os-03/9f5c2a70')}`, format: 'code' },
     stone: 'time', points: 140, author: 'Banner',
   },
 ]
