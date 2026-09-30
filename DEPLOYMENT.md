@@ -29,6 +29,7 @@ regions close together (see §E).
 | Migrations | `npm run migrate:dev` (creates) | `npm run migrate` = `prisma migrate deploy` (applies only) |
 | Seed | `npm run seed` | `npm run seed` (once; idempotent upsert) |
 | Admin reset | `npm run admin:reset` | `npm run admin:reset` (uses `ADMIN_PASSWORD`) |
+| Event reset | `npm run reset:event` (see §J) | `npm run reset:event` (rehearsal / pre-event) |
 | Start | `npm run dev` | Render runs `node dist/server.js` (`npm start`) |
 **Never run `prisma migrate reset` or `migrate dev` against the production DB.**
 Automated tests use a separate `TEST_DATABASE_URL` — never the Neon production URL.
@@ -191,3 +192,38 @@ Secrets live only in Render env / Neon / local session / `server/.env`
   double award.
 - **WebSocket** carries no authoritative data; the admin dashboard reconnects
   (backoff + ping/pong) and re-fetches state via REST after any restart.
+
+
+
+---
+
+## J. Event reset for rehearsal / pre-event (operator-only, local)
+The event state machine is strict: `NOT_STARTED → LIVE → CLOSED`, and a **CLOSED
+event cannot be restarted** via the API (by design). After a START→CLOSE test the
+admin **START** button is therefore unavailable. To rehearse again (or to arm a
+fresh state before the real event), reset the lifecycle from your local machine:
+
+```powershell
+cd D:\ctf-main\ctf-main\server
+
+$env:DATABASE_URL       = "<NEON_POOLED_CONNECTION_STRING>"   # session only; never commit
+$env:RESET_EVENT_CONFIRM = "YES"                             # explicit confirmation
+
+npm run reset:event
+```
+`reset:event`:
+- returns the current event to **`NOT_STARTED`** and clears `startedAt`,
+  `closedAt`, `hiddenActivationAt`, and `hiddenActivated`;
+- clears only that event's **hidden-level attempt state** (assignments + results),
+  so the next start re-arms a clean hidden level;
+- **preserves** users, teams, memberships, challenge definitions, normal Solves,
+  and Submissions, and does **not** delete/recreate the Event row;
+- prints only the event name + previous status + PASS/FAIL (never the DB URL).
+
+It aborts unless `RESET_EVENT_CONFIRM=YES` and `DATABASE_URL` are set. It is **not**
+reachable via any API route and cannot be invoked by players or the admin UI —
+it is a local operator command only. Afterwards the admin dashboard shows
+`CTF STATUS: NOT_STARTED` and **START CTF** is available again.
+
+> There is intentionally **no** destructive `reset:event:clean` (which would
+> delete solves/submissions/scores) — `reset:event` is lifecycle-only.
