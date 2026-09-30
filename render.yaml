@@ -1,8 +1,11 @@
 # Render Blueprint for HexHunt 1.0 — NO DOCKER (native runtimes).
 # Deploy via Render → "New +" → "Blueprint" → connect this repo.
-# Secrets are NOT stored here: generated (JWT/COOKIE) or entered in the
-# dashboard (sync: false). Fill the sync:false vars after the first deploy once
-# the service URLs are known, then trigger a redeploy of the frontends.
+#
+# Service URLs are auto-derived via fromService → RENDER_EXTERNAL_URL, so no
+# *.onrender.com host is hardcoded and nothing URL-related needs manual entry.
+# JWT_SECRET / COOKIE_SECRET are auto-generated. The ONLY values you must enter
+# in the Blueprint screen are the operator secrets:
+#   ADMIN_EMAIL, ADMIN_PASSWORD
 #
 # NOTE: verify field names against the current Render Blueprint reference before
 # applying; Render occasionally renames keys (e.g. env ↔ runtime).
@@ -44,17 +47,29 @@ services:
       # onrender.com subdomains are cross-site → cookie must be SameSite=None.
       - key: COOKIE_SAMESITE
         value: none
-      # Enter after first deploy (the static site URLs):
+      # Auto-derived from the static sites' Render external URLs (CORS allow-list).
       - key: PLAYER_ORIGIN
-        sync: false
+        fromService:
+          name: hexhunt-player
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
       - key: ADMIN_ORIGIN
-        sync: false
-      # Public origin of THIS API (e.g. https://hexhunt-api.onrender.com) — used
-      # to build challenge artifact URLs. Set it, then re-run the seed.
+        fromService:
+          name: hexhunt-admin
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      # This API's own public origin (self-reference) — used to build challenge
+      # artifact URLs. No hardcoded host.
       - key: PUBLIC_API_URL
-        sync: false
+        fromService:
+          name: hexhunt-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
       - key: ARTIFACT_BASE_URL
-        sync: false
+        fromService:
+          name: hexhunt-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
       # Admin credentials — REQUIRED in production (no default). Enter in dashboard.
       - key: ADMIN_EMAIL
         sync: false
@@ -94,9 +109,12 @@ services:
         source: /*
         destination: /index.html
     envVars:
-      # Build-time API origin (baked into the static bundle). Set to the API URL.
+      # Build-time API origin, auto-derived from the backend's external URL.
       - key: VITE_API_URL
-        sync: false
+        fromService:
+          name: hexhunt-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
 
   # ── Admin dashboard (static SPA) ──────────────────────────
   - type: web
@@ -110,6 +128,10 @@ services:
         source: /*
         destination: /index.html
     envVars:
-      # WebSocket URL is derived from this (http→ws, https→wss) by the client.
+      # Build-time API origin, auto-derived from the backend's external URL.
+      # The admin client derives the WebSocket URL from this (https→wss).
       - key: VITE_API_URL
-        sync: false
+        fromService:
+          name: hexhunt-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
