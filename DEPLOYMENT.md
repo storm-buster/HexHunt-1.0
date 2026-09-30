@@ -81,32 +81,45 @@ Automated tests use a separate `TEST_DATABASE_URL` — never the Neon production
 ---
 
 ## D. One-time production bootstrap — from your LOCAL machine (Windows PowerShell)
-Render Free has no Shell, so initialise Neon from your machine. The env vars
-below exist **only for the current PowerShell session** — they are not saved and
-must never be committed. Use the **real** Neon URL and a **strong** password.
+Render Free has no Shell, so initialise Neon from your machine with the guarded
+`bootstrap:render` command. The env vars exist **only for the current PowerShell
+session** — never saved or committed. Use the **real** Neon URL and a **strong**
+password (the command refuses the insecure default).
 
 ```powershell
 cd D:\ctf-main\ctf-main\server
 
 # Session-only variables (replace placeholders; do NOT paste real secrets into any file)
-$env:DATABASE_URL   = "<NEON_POOLED_CONNECTION_STRING>"
-$env:ADMIN_EMAIL    = "admin@doomsday.ctf"
-$env:ADMIN_PASSWORD = "<STRONG_PRODUCTION_PASSWORD>"
-# So the seeded challenge artifact URLs point at the deployed API:
-$env:PUBLIC_API_URL = "https://<api-domain>"
+$env:DATABASE_URL            = "<NEON_POOLED_CONNECTION_STRING>"
+$env:ADMIN_EMAIL             = "admin@doomsday.ctf"
+$env:ADMIN_PASSWORD          = "<STRONG_PRODUCTION_PASSWORD>"
+$env:PUBLIC_API_URL          = "https://<api-domain>"   # so seeded artifact URLs point at the API
+$env:RENDER_BOOTSTRAP_CONFIRM = "YES"                   # explicit production confirmation
 
-npm run migrate        # prisma migrate deploy → applies committed migrations to Neon
-npm run seed           # idempotent: event + 14 challenges + admin (from ADMIN_EMAIL/PASSWORD)
-npm run admin:reset    # (re)sets the admin password hash from ADMIN_PASSWORD; verifies it
+npm ci --include=dev         # ensure the toolchain is present locally
+npm run bootstrap:render     # migrate deploy + idempotent seed + verification (PASS/FAIL + counts)
 ```
-Notes:
-- `npm run seed` / `admin:reset` are **idempotent upserts** — re-running does not
-  wipe users, teams, memberships, submissions, solves, or scores; it only ensures
-  the event exists, upserts the 14 challenge records, and sets the admin.
-- The commands print a **masked** DB host only — never the URL, password, or hash.
-- Close the terminal (or `Remove-Item Env:DATABASE_URL, Env:ADMIN_PASSWORD`) when
-  done so the secrets don't linger in the session.
-- Obtain the External DB URL from **Neon → Connect** (§B) — not from Render.
+`bootstrap:render` does everything safely in one step:
+- runs `prisma migrate deploy` (schema; **never** reset/drop),
+- idempotent seed (event + 14 challenges + admin from `ADMIN_EMAIL`/`ADMIN_PASSWORD`);
+  re-running never wipes users/teams/memberships/submissions/solves/scores,
+- verifies all 9 tables exist, Event=1, Challenge=14, admin exists/ADMIN/active,
+  and the password verifies — printing **PASS/FAIL + counts only** (never the URL,
+  password, or hash).
+
+Safety gates (the command aborts unless satisfied): `RENDER_BOOTSTRAP_CONFIRM=YES`,
+`DATABASE_URL`/`ADMIN_EMAIL`/`ADMIN_PASSWORD` present, password ≥ 8 chars and not
+the default, and `DATABASE_URL` is **not** localhost or a known dev/test DB. (For
+testing the command itself against a disposable *local* DB only, set
+`RENDER_BOOTSTRAP_ALLOW_LOCAL=YES` — never for production.)
+
+Re-verify anytime (read-only, no session/bypass):
+```powershell
+$env:DATABASE_URL="<NEON_POOLED_CONNECTION_STRING>"; $env:ADMIN_EMAIL="admin@doomsday.ctf"; $env:ADMIN_PASSWORD="<PASSWORD>"
+npm run verify:render-admin   # → Admin lookup / Password verification / Role / Active
+```
+Close the terminal (or `Remove-Item Env:DATABASE_URL, Env:ADMIN_PASSWORD`) when done.
+Obtain the External DB URL from **Neon → Connect** (§B) — not from Render.
 
 ---
 

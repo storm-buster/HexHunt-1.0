@@ -25,9 +25,6 @@ async function main(): Promise<void> {
   if (config.isProd && password === 'ChangeMe_Admin123!') {
     throw new Error('Refusing to set the insecure default admin password in production — set a strong ADMIN_PASSWORD');
   }
-  if (config.isProd && password === 'ChangeMe_Admin123!') {
-    throw new Error('Refusing to set the insecure default admin password in production — set a strong ADMIN_PASSWORD');
-  }
 
   // 1. Verify database connectivity.
   await prisma.$connect();
