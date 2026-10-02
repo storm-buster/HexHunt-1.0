@@ -66,6 +66,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [challenges, setChallenges] = useState<any[]>([]);
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [hidden, setHidden] = useState<any>(null);
+  const [sessions, setSessions] = useState<any[]>([]);
   const [connected, setConnected] = useState(false);
   const [feed, setFeed] = useState<string[]>([]);
   const socketRef = useRef<AdminSocket | null>(null);
@@ -73,13 +74,13 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [ev, st, lb, tm, ch, sb, hd] = await Promise.all([
+      const [ev, st, lb, tm, ch, sb, hd, ss] = await Promise.all([
         api.event(), api.statistics(), api.leaderboard(), api.teams(),
-        api.challenges(), api.submissions(50), api.hidden(),
+        api.challenges(), api.submissions(50), api.hidden(), api.sessions(),
       ]);
       setEvent(ev); setStats(st.statistics); setLeaderboard(lb.leaderboard);
       setTeams(tm.teams); setChallenges(ch.challenges); setSubmissions(sb.submissions);
-      setHidden(hd.hidden);
+      setHidden(hd.hidden); setSessions(ss.sessions);
     } catch (e: any) {
       if (String(e.message).includes('401') || String(e.message).toLowerCase().includes('auth')) onLogout();
     }
@@ -104,9 +105,12 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   }, [refresh]);
 
   const doStart = async () => { try { await api.startEvent(); await refresh(); } catch (e: any) { alert(e.message); } };
-  const doClose = async () => { if (confirm('Close the CTF? Submissions will stop and the leaderboard freezes.')) { try { await api.closeEvent(); await refresh(); } catch (e: any) { alert(e.message); } } };
+  const doClose = async () => { if (confirm('Stop the CTF? This completes & archives the current session. It cannot be reopened.')) { try { await api.closeEvent(); await refresh(); } catch (e: any) { alert(e.message); } } };
+  const doExport = async (s: any) => { try { await api.exportSession(s.id, `hexhunt-session-${String(s.sessionNumber).padStart(3, '0')}.zip`); } catch (e: any) { alert(e.message); } };
 
-  const status = event?.event?.status ?? 'NOT_STARTED';
+  const status = event?.status ?? 'NOT_STARTED';
+  const session = event?.session ?? null;
+  const startLabel = status === 'LIVE' ? 'START CTF' : status === 'COMPLETED' ? 'START NEW SESSION' : 'START CTF';
 
   return (
     <div className="dash">
@@ -124,15 +128,15 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       <section className="panel">
         <h2>Event Control</h2>
         <div className="event-control">
-          <div className={`status-badge ${status}`}>CTF STATUS: {status}</div>
+          <div className={`status-badge ${status}`}>CTF STATUS: {status}{session ? ` · SESSION #${session.sessionNumber}` : ''}</div>
           <div className="event-times">
-            <span>Start: {fmtTime(event?.event?.startedAt)}</span>
-            <span>Close: {fmtTime(event?.event?.closedAt)}</span>
-            <span>Hidden activation: {event?.event?.hiddenActivated ? fmtTime(event?.event?.hiddenActivationAt) : (status === 'LIVE' ? 'scheduled (hidden)' : '—')}</span>
+            <span>Start: {fmtTime(session?.startedAt)}</span>
+            <span>Completed: {fmtTime(session?.completedAt)}</span>
+            <span>Hidden activation: {session?.hiddenActivated ? fmtTime(session?.hiddenActivationAt) : (status === 'LIVE' ? 'scheduled (hidden)' : '—')}</span>
           </div>
           <div className="btns">
-            <button onClick={doStart} disabled={status === 'LIVE'}>▶ {status === 'CLOSED' ? 'REOPEN CTF' : 'START CTF'}</button>
-            <button className="danger" onClick={doClose} disabled={status !== 'LIVE'}>■ CLOSE CTF</button>
+            <button onClick={doStart} disabled={status === 'LIVE'}>▶ {startLabel}</button>
+            <button className="danger" onClick={doClose} disabled={status !== 'LIVE'}>■ STOP CTF</button>
           </div>
         </div>
       </section>
@@ -252,6 +256,31 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
               </tr>
             ))}
             {(!hidden?.teams || hidden.teams.length === 0) && <tr><td colSpan={5} className="muted">No teams selected yet (activates at T+30)</td></tr>}
+          </tbody>
+        </table>
+      </section>
+
+      {/* Session history + export */}
+      <section className="panel">
+        <h2>Session History</h2>
+        <table>
+          <thead><tr><th>#</th><th>Status</th><th>Started</th><th>Completed</th><th>Duration</th><th>Teams</th><th>Solves</th><th>Export</th></tr></thead>
+          <tbody>
+            {sessions.map((s) => (
+              <tr key={s.id} className={s.status === 'LIVE' ? 'row-ok' : ''}>
+                <td className="mono">#{s.sessionNumber}</td>
+                <td>{s.status}</td>
+                <td>{fmtTime(s.startedAt)}</td>
+                <td>{fmtTime(s.completedAt)}</td>
+                <td>{fmtSeconds(s.durationSeconds)}</td>
+                <td>{s.teamsParticipating}</td>
+                <td>{s.totalSolves}</td>
+                <td>
+                  <button className="ghost" onClick={() => doExport(s)}>⤓ DOWNLOAD</button>
+                </td>
+              </tr>
+            ))}
+            {sessions.length === 0 && <tr><td colSpan={8} className="muted">No sessions yet — press START CTF to begin session #1</td></tr>}
           </tbody>
         </table>
       </section>

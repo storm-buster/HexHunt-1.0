@@ -5,6 +5,7 @@ import { requireTeam } from '../teams/team.service.js';
 import { getHiddenState, submitHidden } from './hidden.service.js';
 import { getFinalBoss } from '../challenges/finalboss.service.js';
 import { getUserById } from '../auth/auth.service.js';
+import { getCurrentSession } from '../events/event.service.js';
 import { submissionRateLimit } from '../middleware/rateLimit.js';
 
 const submitSchema = z.object({ answer: z.string().min(1).max(200) });
@@ -34,8 +35,12 @@ export async function hiddenRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/final-boss', async (request, reply) => {
     const { teamId } = await requireTeam(request.user!.sub);
+    const session = await getCurrentSession();
     const user = await getUserById(request.user!.sub);
-    const view = await getFinalBoss(teamId, user?.name ?? 'Operative');
+    if (!session) {
+      return reply.send({ finalBoss: { unlocked: false, stones: [], stoneCount: 0, requiredStones: 6, reveal: null, participantName: user?.name ?? 'Operative' } });
+    }
+    const view = await getFinalBoss(session.id, teamId, user?.name ?? 'Operative');
     return reply.send({ finalBoss: view });
   });
 }

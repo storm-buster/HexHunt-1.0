@@ -35,4 +35,37 @@ export const api = {
   challenges: () => req<{ challenges: any[] }>('/api/admin/challenges'),
   hidden: () => req<{ hidden: any }>('/api/admin/hidden-level'),
   statistics: () => req<{ statistics: any }>('/api/admin/statistics'),
+
+  // ── Session history + export ──────────────────────────────
+  sessions: () => req<{ sessions: any[] }>('/api/admin/sessions'),
+  sessionDetail: (id: string) => req<{ session: any }>(`/api/admin/sessions/${id}`),
+
+  // Downloads the session export ZIP via the browser (admin-only on the server).
+  exportSession: async (id: string, fallbackName: string): Promise<void> => {
+    const res = await fetch(`${API_BASE}/api/admin/sessions/${id}/export`, {
+      method: 'GET',
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      let message = `Export failed (${res.status})`;
+      try {
+        const body = await res.json();
+        message = body?.error?.message ?? message;
+      } catch { /* non-JSON */ }
+      throw new Error(message);
+    }
+    // Prefer the server-provided filename from Content-Disposition.
+    const disposition = res.headers.get('Content-Disposition') ?? '';
+    const match = /filename="?([^"]+)"?/.exec(disposition);
+    const filename = match?.[1] ?? fallbackName;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 };

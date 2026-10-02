@@ -16,10 +16,11 @@ export interface FinalBossView {
 }
 
 export async function getFinalBoss(
+  sessionId: string,
   teamId: string,
   userName: string,
 ): Promise<FinalBossView> {
-  const progress = await getTeamProgress(teamId);
+  const progress = await getTeamProgress(sessionId, teamId);
   const stoneCount = progress.stones.length;
   const unlocked = stoneCount >= REQUIRED_STONES;
 

@@ -89,6 +89,7 @@ async function main(): Promise<void> {
       ['Team', () => prisma.team.count()],
       ['TeamMembership', () => prisma.teamMembership.count()],
       ['Event', () => prisma.event.count()],
+      ['EventSession', () => prisma.eventSession.count()],
       ['Challenge', () => prisma.challenge.count()],
       ['Solve', () => prisma.solve.count()],
       ['Submission', () => prisma.submission.count()],

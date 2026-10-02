@@ -102,7 +102,8 @@ describe('ANSWER KEY — every documented answer validates against the seeded ba
     await startEventAsAdmin(app);
     // force T+30 boundary + run activation (single member → this user selected)
     const event = await prisma.event.findFirst({ orderBy: { createdAt: 'desc' } });
-    await prisma.event.update({ where: { id: event!.id }, data: { hiddenActivationAt: new Date(Date.now() - 1000), hiddenActivated: false } });
+    const session = await prisma.eventSession.findFirst({ where: { eventId: event!.id, status: 'LIVE' }, orderBy: { sessionNumber: 'desc' } });
+    await prisma.eventSession.update({ where: { id: session!.id }, data: { hiddenActivationAt: new Date(Date.now() - 1000), hiddenActivated: false } });
     await refreshHiddenActivation();
 
     const state = JSON.parse((await app.inject({ method: 'GET', url: '/api/hidden-level', headers: { cookie } })).body).hidden;

@@ -1,4 +1,4 @@
-// Prisma schema — Avengers: Doomsday CTF (server-backed platform)
+// Prisma schema — HexHunt 1.0 (session-based CTF)
 // Database: PostgreSQL
 
 generator client {
@@ -20,10 +20,9 @@ enum TeamRole {
   MEMBER
 }
 
-enum EventStatus {
-  NOT_STARTED
+enum SessionStatus {
   LIVE
-  CLOSED
+  COMPLETED
 }
 
 enum SubmissionResult {
@@ -33,7 +32,7 @@ enum SubmissionResult {
   REJECTED
 }
 
-// ── Users ───────────────────────────────────────────────────
+// ── Users (persistent across sessions) ──────────────────────
 model User {
   id           String    @id @default(cuid())
   name         String
@@ -45,15 +44,15 @@ model User {
   updatedAt    DateTime  @updatedAt
   lastLoginAt  DateTime?
 
-  membership    TeamMembership?
-  submissions   Submission[]
-  hiddenResults HiddenLevelResult[]
+  membership        TeamMembership?
+  submissions       Submission[]
+  hiddenResults     HiddenLevelResult[]
   hiddenAssignments HiddenLevelAssignment[]
 
   @@index([email])
 }
 
-// ── Teams ───────────────────────────────────────────────────
+// ── Teams (persistent across sessions) ──────────────────────
 model Team {
   id         String   @id @default(cuid())
   name       String   @unique
@@ -65,10 +64,10 @@ model Team {
   eventId String?
   event   Event?  @relation(fields: [eventId], references: [id])
 
-  memberships  TeamMembership[]
-  solves       Solve[]
-  submissions  Submission[]
-  hiddenResult HiddenLevelResult?
+  memberships       TeamMembership[]
+  solves            Solve[]
+  submissions       Submission[]
+  hiddenResults     HiddenLevelResult[]
   hiddenAssignments HiddenLevelAssignment[]
 
   @@index([eventId])
@@ -89,28 +88,45 @@ model TeamMembership {
   @@index([teamId])
 }
 
-// ── Event ───────────────────────────────────────────────────
+// ── Event (persistent container; one per deployment) ────────
 model Event {
-  id        String      @id @default(cuid())
+  id        String   @id @default(cuid())
   name      String
-  status    EventStatus @default(NOT_STARTED)
-  startedAt DateTime?
-  closedAt  DateTime?
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  // Hidden-level activation is generated server-side when the event goes LIVE.
-  hiddenActivationAt DateTime?
-  hiddenActivated    Boolean   @default(false)
-
-  teams        Team[]
-  solves       Solve[]
-  submissions  Submission[]
-  hiddenResults HiddenLevelResult[]
-  hiddenAssignments HiddenLevelAssignment[]
+  teams    Team[]
+  sessions EventSession[]
 }
 
-// ── Challenge (metadata + secret flag hash) ─────────────────
+// ── EventSession (one START→STOP run) ───────────────────────
+// Each START creates a new session; STOP marks it COMPLETED (archived). All
+// gameplay is scoped to a session. Only ONE LIVE session may exist per event
+// (enforced by a partial unique index added in the migration).
+model EventSession {
+  id                 String        @id @default(cuid())
+  eventId            String
+  sessionNumber      Int
+  status             SessionStatus @default(LIVE)
+  startedAt          DateTime      @default(now())
+  completedAt        DateTime?
+  // Hidden-level activation is scheduled server-side at session start.
+  hiddenActivationAt DateTime?
+  hiddenActivated    Boolean       @default(false)
+  createdAt          DateTime      @default(now())
+
+  event             Event                   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  solves            Solve[]
+  submissions       Submission[]
+  hiddenResults     HiddenLevelResult[]
+  hiddenAssignments HiddenLevelAssignment[]
+
+  @@unique([eventId, sessionNumber])
+  @@index([eventId])
+  @@index([status])
+}
+
+// ── Challenge (persistent definitions) ──────────────────────
 model Challenge {
   id          String  @id // e.g. "wv-01"
   title       String
@@ -119,29 +135,24 @@ model Challenge {
   difficulty  String
   description String
   narrative   String
-  hints       Json // string[]
+  hints       Json
   portalType  String
-  portalPuzzle Json // player-safe portal metadata (NO answer)
-  clueContent Json? // player-safe clue (sanitized: no flag)
+  portalPuzzle Json
+  clueContent Json?
   type        String
   stone       String
   points      Int
   author      String
 
-  // Progression
   nextChallengeId String?
   orderIndex      Int
-  universeOrder   Int // ordinal of the universe (0 web, 1 osint, 2 darknet)
+  universeOrder   Int
 
   // Secrets — NEVER serialized to players
   flagHash        String
   portalAnswerHash String?
-
-  // Server-only reveal text (e.g. final-boss reward string), returned to a
-  // team only after it satisfies the server-side completion check.
   revealText String?
 
-  // Hidden-level marker (also used for the final-boss row, distinguished by id)
   isHidden       Boolean @default(false)
   hiddenReward   Int?
   hiddenPenalty  Int?
@@ -156,10 +167,10 @@ model Challenge {
   @@index([isHidden])
 }
 
-// ── Solve (team-wide, one per team per challenge) ───────────
+// ── Solve (team-wide, one per team per challenge PER SESSION) ─
 model Solve {
   id             String   @id @default(cuid())
-  eventId        String
+  sessionId      String
   teamId         String
   challengeId    String
   solvedByUserId String
@@ -169,21 +180,22 @@ model Solve {
   awardedPoints  Int
   elapsedSeconds Int
 
-  event     Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  team      Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  challenge Challenge @relation(fields: [challengeId], references: [id])
+  session   EventSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  team      Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  challenge Challenge    @relation(fields: [challengeId], references: [id])
 
-  // A challenge can only be solved ONCE per team.
-  @@unique([teamId, challengeId])
-  @@index([eventId])
+  // A challenge can be solved once per team PER SESSION (re-solvable next session).
+  @@unique([sessionId, teamId, challengeId])
+  @@index([sessionId])
   @@index([teamId])
   @@index([challengeId])
+  @@index([sessionId, teamId])
 }
 
-// ── Submission audit log (every attempt) ────────────────────
+// ── Submission audit log (every attempt, per session) ───────
 model Submission {
   id            String           @id @default(cuid())
-  eventId       String
+  sessionId     String
   teamId        String
   userId        String
   challengeId   String
@@ -193,50 +205,49 @@ model Submission {
   submittedAt   DateTime         @default(now())
   ip            String?
 
-  event     Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  team      Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  challenge Challenge @relation(fields: [challengeId], references: [id])
+  session   EventSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  team      Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge Challenge    @relation(fields: [challengeId], references: [id])
 
-  @@index([eventId])
+  @@index([sessionId])
   @@index([teamId])
   @@index([challengeId])
   @@index([submittedAt])
+  @@index([sessionId, teamId])
 }
 
-// ── Hidden-level result (one attempt per team) ──────────────
+// ── Hidden-level result (one attempt per team PER SESSION) ───
 model HiddenLevelResult {
-  id             String   @id @default(cuid())
-  eventId        String
-  teamId         String   @unique // one attempt/result per team
+  id                String   @id @default(cuid())
+  sessionId         String
+  teamId            String
   submittedByUserId String
-  correct        Boolean
-  scoreDelta     Int
-  submittedAt    DateTime @default(now())
+  correct           Boolean
+  scoreDelta        Int
+  submittedAt       DateTime @default(now())
 
-  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  team  Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  user  User  @relation(fields: [submittedByUserId], references: [id], onDelete: Cascade)
+  session EventSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  team    Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [submittedByUserId], references: [id], onDelete: Cascade)
 
-  @@index([eventId])
+  @@unique([sessionId, teamId])
+  @@index([sessionId])
 }
 
-// ── Hidden-level per-team member assignment ─────────────────
-// At activation (T + HIDDEN_LEVEL_DELAY_MINUTES) the server selects exactly ONE
-// active member per team using a cryptographically secure RNG. Persisted so the
-// selection is deterministic and never re-rolls on subsequent requests.
+// ── Hidden-level per-team member assignment (per session) ───
 model HiddenLevelAssignment {
   id             String   @id @default(cuid())
-  eventId        String
+  sessionId      String
   teamId         String
   selectedUserId String
   activatedAt    DateTime @default(now())
   createdAt      DateTime @default(now())
 
-  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  team  Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  user  User  @relation(fields: [selectedUserId], references: [id], onDelete: Cascade)
+  session EventSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  team    Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [selectedUserId], references: [id], onDelete: Cascade)
 
-  @@unique([teamId, eventId])
-  @@index([eventId])
+  @@unique([sessionId, teamId])
+  @@index([sessionId])
 }

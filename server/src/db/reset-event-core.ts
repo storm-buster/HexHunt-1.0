@@ -1,16 +1,16 @@
 import type { PrismaClient } from '@prisma/client';
 
-// Config-free (no dotenv). Resets ONLY the current event's lifecycle back to
-// NOT_STARTED for a controlled rehearsal, and clears that event's hidden-level
-// ATTEMPT state (assignments + results), which only exists after activation and
-// is clearly event-owned (FK eventId). It does NOT touch users, teams,
-// memberships, challenge definitions, normal Solves, or Submissions, and it does
-// NOT delete or recreate the Event row.
+// Config-free operator/test tool. Removes the CURRENT LIVE session (and its
+// gameplay, via FK cascade) so a fresh rehearsal can START a new session.
+// It NEVER touches COMPLETED (historical) sessions, users, teams, memberships,
+// or challenge definitions, and never deletes/recreates the Event container.
 
 export interface ResetEventResult {
   eventId: string;
-  name: string;
-  previousStatus: 'NOT_STARTED' | 'LIVE' | 'CLOSED';
+  deletedLiveSession: boolean;
+  sessionNumber: number | null;
+  clearedSolves: number;
+  clearedSubmissions: number;
   clearedHiddenAssignments: number;
   clearedHiddenResults: number;
 }
@@ -21,29 +21,35 @@ export async function resetEventLifecycle(
   const event = await prisma.event.findFirst({ orderBy: { createdAt: 'desc' } });
   if (!event) return null;
 
-  const cleared = await prisma.$transaction(async (tx) => {
-    // Event-owned hidden-level attempt state (post-activation only).
-    const results = await tx.hiddenLevelResult.deleteMany({ where: { eventId: event.id } });
-    const assignments = await tx.hiddenLevelAssignment.deleteMany({ where: { eventId: event.id } });
-    // Lifecycle fields → NOT_STARTED (server regenerates hidden activation on next start).
-    await tx.event.update({
-      where: { id: event.id },
-      data: {
-        status: 'NOT_STARTED',
-        startedAt: null,
-        closedAt: null,
-        hiddenActivationAt: null,
-        hiddenActivated: false,
-      },
-    });
-    return { assignments: assignments.count, results: results.count };
+  const live = await prisma.eventSession.findFirst({
+    where: { eventId: event.id, status: 'LIVE' },
+    orderBy: { sessionNumber: 'desc' },
   });
+
+  if (!live) {
+    return {
+      eventId: event.id, deletedLiveSession: false, sessionNumber: null,
+      clearedSolves: 0, clearedSubmissions: 0, clearedHiddenAssignments: 0, clearedHiddenResults: 0,
+    };
+  }
+
+  const [solves, submissions, assignments, results] = await Promise.all([
+    prisma.solve.count({ where: { sessionId: live.id } }),
+    prisma.submission.count({ where: { sessionId: live.id } }),
+    prisma.hiddenLevelAssignment.count({ where: { sessionId: live.id } }),
+    prisma.hiddenLevelResult.count({ where: { sessionId: live.id } }),
+  ]);
+
+  // Deleting the live session cascades to its solves/submissions/hidden rows.
+  await prisma.eventSession.delete({ where: { id: live.id } });
 
   return {
     eventId: event.id,
-    name: event.name,
-    previousStatus: event.status,
-    clearedHiddenAssignments: cleared.assignments,
-    clearedHiddenResults: cleared.results,
+    deletedLiveSession: true,
+    sessionNumber: live.sessionNumber,
+    clearedSolves: solves,
+    clearedSubmissions: submissions,
+    clearedHiddenAssignments: assignments,
+    clearedHiddenResults: results,
   };
 }

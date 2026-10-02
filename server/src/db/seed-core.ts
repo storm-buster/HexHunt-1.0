@@ -33,11 +33,12 @@ export async function seedCore(
     create: { email: adminEmail, name: opts.adminName, passwordHash: adminHash, role: 'ADMIN' },
   });
 
-  // Singleton event — create only if none exists (never duplicates).
+  // Singleton event container — create only if none exists. Sessions are created
+  // by START (never here).
   const existingEvent = await prisma.event.findFirst({ orderBy: { createdAt: 'desc' } });
   let eventCreated = false;
   if (!existingEvent) {
-    await prisma.event.create({ data: { name: opts.eventName, status: 'NOT_STARTED' } });
+    await prisma.event.create({ data: { name: opts.eventName } });
     eventCreated = true;
   }
 

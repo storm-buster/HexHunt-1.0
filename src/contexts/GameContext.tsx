@@ -28,9 +28,14 @@ interface TeamView {
 }
 
 interface EventView {
-  status: 'NOT_STARTED' | 'LIVE' | 'CLOSED'
-  startedAt: string | null
-  closedAt: string | null
+  status: 'NOT_STARTED' | 'LIVE' | 'COMPLETED'
+  session: {
+    id: string
+    sessionNumber: number
+    status: 'LIVE' | 'COMPLETED'
+    startedAt: string
+    completedAt: string | null
+  } | null
   serverTime: string
   hidden: { activated: boolean; activatedAt: string | null }
 }

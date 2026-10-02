@@ -18,22 +18,12 @@ export async function resetState(): Promise<void> {
   await prisma.solve.deleteMany({});
   await prisma.hiddenLevelResult.deleteMany({});
   await prisma.hiddenLevelAssignment.deleteMany({});
+  // Removing sessions clears all per-session gameplay (also via FK cascade).
+  await prisma.eventSession.deleteMany({});
   await prisma.teamMembership.deleteMany({});
   await prisma.team.deleteMany({});
   await prisma.user.deleteMany({ where: { role: 'PLAYER' } });
-  const event = await prisma.event.findFirst({ orderBy: { createdAt: 'desc' } });
-  if (event) {
-    await prisma.event.update({
-      where: { id: event.id },
-      data: {
-        status: 'NOT_STARTED',
-        startedAt: null,
-        closedAt: null,
-        hiddenActivationAt: null,
-        hiddenActivated: false,
-      },
-    });
-  }
+  // Event is a persistent container — nothing to reset on it.
 }
 
 // Extract the session cookie from a login/register response.
@@ -88,6 +78,38 @@ export async function startEventAsAdmin(app: FastifyInstance): Promise<void> {
     headers: { cookie: adminCookie },
   });
   if (res.statusCode !== 200) throw new Error(`start event failed: ${res.body}`);
+}
+
+export async function stopEventAsAdmin(app: FastifyInstance): Promise<void> {
+  const adminCookie = await loginAdmin(app);
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/admin/event/close',
+    headers: { cookie: adminCookie },
+  });
+  if (res.statusCode !== 200) throw new Error(`stop event failed: ${res.body}`);
+}
+
+// The current LIVE session row (or null).
+export async function currentSession() {
+  const event = await prisma.event.findFirst({ orderBy: { createdAt: 'desc' } });
+  if (!event) return null;
+  return prisma.eventSession.findFirst({
+    where: { eventId: event.id, status: 'LIVE' },
+    orderBy: { sessionNumber: 'desc' },
+  });
+}
+
+// Force hidden-level activation NOW on the current live session (test shortcut).
+export async function forceHiddenActivation(): Promise<void> {
+  const { refreshHiddenActivation } = await import('../src/events/event.service.js');
+  const session = await currentSession();
+  if (!session) throw new Error('no live session to activate hidden level');
+  await prisma.eventSession.update({
+    where: { id: session.id },
+    data: { hiddenActivationAt: new Date(Date.now() - 1000), hiddenActivated: false },
+  });
+  await refreshHiddenActivation();
 }
 
 // Look up a user's id by email (tests map selected users back to their cookies).

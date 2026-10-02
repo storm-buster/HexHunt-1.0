@@ -1,172 +1,221 @@
 import { randomInt } from 'node:crypto';
-import type { Event } from '@prisma/client';
+import type { Event, EventSession } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { config } from '../config/index.js';
 import { Errors } from '../middleware/errors.js';
 import { broadcast } from '../realtime/hub.js';
 
-// This project runs a single active CTF event. The schema supports many; we
-// always operate on the most recently created one.
-export async function getActiveEvent(): Promise<Event | null> {
+// One persistent Event container per deployment; gameplay happens in sessions.
+export async function getEvent(): Promise<Event | null> {
   return prisma.event.findFirst({ orderBy: { createdAt: 'desc' } });
 }
 
 export async function ensureEvent(): Promise<Event> {
-  const existing = await getActiveEvent();
+  const existing = await getEvent();
   if (existing) return existing;
-  return prisma.event.create({ data: { name: config.eventName, status: 'NOT_STARTED' } });
+  return prisma.event.create({ data: { name: config.eventName } });
 }
 
 export async function requireEvent(): Promise<Event> {
-  const event = await getActiveEvent();
+  const event = await getEvent();
   if (!event) throw Errors.notFound('No CTF event exists');
   return event;
 }
 
-// Player/admin-safe event view. Server time is authoritative and always sent
-// so clients never rely on their local clock.
+// The current LIVE session for the event, or null if none is running.
+export async function getCurrentSession(): Promise<EventSession | null> {
+  const event = await getEvent();
+  if (!event) return null;
+  return prisma.eventSession.findFirst({
+    where: { eventId: event.id, status: 'LIVE' },
+    orderBy: { sessionNumber: 'desc' },
+  });
+}
+
+// For gameplay endpoints: require a LIVE session or reject.
+export async function requireLiveSession(): Promise<EventSession> {
+  const session = await refreshHiddenActivation();
+  if (!session) throw Errors.eventNotLive();
+  return session;
+}
+
+// ── Event/session view (status derived from sessions) ───────
 export interface EventView {
   id: string;
   name: string;
-  status: 'NOT_STARTED' | 'LIVE' | 'CLOSED';
-  startedAt: Date | null;
-  closedAt: Date | null;
+  status: 'NOT_STARTED' | 'LIVE' | 'COMPLETED';
+  session: {
+    id: string;
+    sessionNumber: number;
+    status: 'LIVE' | 'COMPLETED';
+    startedAt: Date;
+    completedAt: Date | null;
+  } | null;
   serverTime: string;
-  hidden: {
-    activated: boolean;
-    // Activation timestamp is NEVER exposed to players before it fires.
-    activatedAt: Date | null;
-  };
+  hidden: { activated: boolean; activatedAt: Date | null };
 }
 
 export async function getEventView(includeHiddenSchedule = false): Promise<EventView> {
-  const event = await refreshHiddenActivation();
+  const event = await requireEvent();
+  // Flip hidden activation lazily for the live session (if any).
+  await refreshHiddenActivation();
+
+  const live = await prisma.eventSession.findFirst({
+    where: { eventId: event.id, status: 'LIVE' },
+    orderBy: { sessionNumber: 'desc' },
+  });
+  const session =
+    live ??
+    (await prisma.eventSession.findFirst({
+      where: { eventId: event.id },
+      orderBy: { sessionNumber: 'desc' },
+    }));
+
+  const status: EventView['status'] = live ? 'LIVE' : session ? 'COMPLETED' : 'NOT_STARTED';
+
   return {
     id: event.id,
     name: event.name,
-    status: event.status,
-    startedAt: event.startedAt,
-    closedAt: event.closedAt,
+    status,
+    session: session
+      ? {
+          id: session.id,
+          sessionNumber: session.sessionNumber,
+          status: session.status,
+          startedAt: session.startedAt,
+          completedAt: session.completedAt,
+        }
+      : null,
     serverTime: new Date().toISOString(),
     hidden: {
-      activated: event.hiddenActivated,
-      activatedAt: event.hiddenActivated
-        ? event.hiddenActivationAt
+      activated: live?.hiddenActivated ?? false,
+      activatedAt: live?.hiddenActivated
+        ? live.hiddenActivationAt
         : includeHiddenSchedule
-          ? event.hiddenActivationAt
+          ? (live?.hiddenActivationAt ?? null)
           : null,
     },
   };
 }
 
-export async function startEvent(): Promise<Event> {
+// ── START: always create a NEW session (never reopen) ───────
+export async function startSession(): Promise<EventSession> {
   const event = await requireEvent();
-  if (event.status === 'LIVE') return event; // idempotent: already live
+
+  // Idempotent: if a session is already LIVE, return it.
+  const existingLive = await prisma.eventSession.findFirst({
+    where: { eventId: event.id, status: 'LIVE' },
+  });
+  if (existingLive) return existingLive;
 
   const now = new Date();
+  const hiddenActivationAt = new Date(now.getTime() + config.hidden.delayMinutes * 60_000);
+  const last = await prisma.eventSession.findFirst({
+    where: { eventId: event.id },
+    orderBy: { sessionNumber: 'desc' },
+  });
+  const sessionNumber = (last?.sessionNumber ?? 0) + 1;
 
-  if (event.status === 'NOT_STARTED') {
-    // First start: set the authoritative start time and schedule hidden
-    // activation exactly HIDDEN_LEVEL_DELAY_MINUTES later (default T+30).
-    const hiddenActivationAt = new Date(now.getTime() + config.hidden.delayMinutes * 60_000);
-    const updated = await prisma.event.update({
-      where: { id: event.id },
-      data: { status: 'LIVE', startedAt: now, hiddenActivationAt, hiddenActivated: false },
+  try {
+    const created = await prisma.eventSession.create({
+      data: {
+        eventId: event.id,
+        sessionNumber,
+        status: 'LIVE',
+        startedAt: now,
+        hiddenActivationAt,
+        hiddenActivated: false,
+      },
     });
-    broadcast({ type: 'CTF_STARTED', payload: { startedAt: updated.startedAt } });
-    return updated;
+    broadcast({ type: 'CTF_STARTED', payload: { sessionId: created.id, sessionNumber } });
+    return created;
+  } catch (e) {
+    // Lost a race (partial-unique one-LIVE index, or sessionNumber unique) →
+    // return the session that won.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      const live = await prisma.eventSession.findFirst({
+        where: { eventId: event.id, status: 'LIVE' },
+      });
+      if (live) return live;
+    }
+    throw e;
+  }
+}
+
+// ── STOP: complete the current LIVE session (archive it) ────
+export async function stopSession(): Promise<EventSession> {
+  const event = await requireEvent();
+  const live = await prisma.eventSession.findFirst({
+    where: { eventId: event.id, status: 'LIVE' },
+    orderBy: { sessionNumber: 'desc' },
+  });
+
+  if (!live) {
+    // Idempotent if a prior session exists; invalid if nothing ever started.
+    const anySession = await prisma.eventSession.findFirst({
+      where: { eventId: event.id },
+      orderBy: { sessionNumber: 'desc' },
+    });
+    if (anySession) return anySession; // already completed — safe no-op
+    throw Errors.conflict('No session is running');
   }
 
-  // CLOSED -> LIVE: reopen the SAME run (not a destructive reset, not a new
-  // event). Preserve startedAt, hiddenActivationAt and hiddenActivated so
-  // time-decay scoring and hidden-level timing keep using the ORIGINAL start.
-  // Only clear closedAt and flip status back to LIVE. Already-activated hidden
-  // assignments are intentionally left intact (never re-randomized).
-  const updated = await prisma.event.update({
-    where: { id: event.id },
-    data: { status: 'LIVE', closedAt: null },
+  const updated = await prisma.eventSession.update({
+    where: { id: live.id },
+    data: { status: 'COMPLETED', completedAt: new Date() },
   });
-  broadcast({ type: 'CTF_STARTED', payload: { startedAt: updated.startedAt, reopened: true } });
+  broadcast({ type: 'CTF_CLOSED', payload: { sessionId: updated.id, sessionNumber: updated.sessionNumber } });
   return updated;
 }
 
-export async function closeEvent(): Promise<Event> {
-  const event = await requireEvent();
-  if (event.status === 'CLOSED') return event;
-  if (event.status !== 'LIVE') {
-    throw Errors.conflict(`Cannot close event from status ${event.status}`);
-  }
-  const updated = await prisma.event.update({
-    where: { id: event.id },
-    data: { status: 'CLOSED', closedAt: new Date() },
+// Lazily flip hidden activation for the LIVE session when its scheduled time
+// passes. Returns the LIVE session (post-update) or null if none is live.
+export async function refreshHiddenActivation(): Promise<EventSession | null> {
+  const event = await getEvent();
+  if (!event) return null;
+  const live = await prisma.eventSession.findFirst({
+    where: { eventId: event.id, status: 'LIVE' },
+    orderBy: { sessionNumber: 'desc' },
   });
-  broadcast({ type: 'CTF_CLOSED', payload: { closedAt: updated.closedAt } });
-  return updated;
-}
+  if (!live) return null;
 
-// Lazily flip hidden activation when the scheduled time is reached (only while
-// LIVE). Called on relevant reads and by a periodic interval in the app.
-export async function refreshHiddenActivation(): Promise<Event> {
-  const event = await requireEvent();
-  if (
-    event.status === 'LIVE' &&
-    !event.hiddenActivated &&
-    event.hiddenActivationAt &&
-    Date.now() >= event.hiddenActivationAt.getTime()
-  ) {
-    const updated = await prisma.event.update({
-      where: { id: event.id },
+  if (!live.hiddenActivated && live.hiddenActivationAt && Date.now() >= live.hiddenActivationAt.getTime()) {
+    const updated = await prisma.eventSession.update({
+      where: { id: live.id },
       data: { hiddenActivated: true },
     });
-    // At activation, select exactly one random member per active team.
     await assignHiddenLevelMembers(updated.id);
-    broadcast({
-      type: 'HIDDEN_LEVEL_ACTIVATED',
-      payload: { activatedAt: updated.hiddenActivationAt },
-    });
+    broadcast({ type: 'HIDDEN_LEVEL_ACTIVATED', payload: { sessionId: updated.id, activatedAt: updated.hiddenActivationAt } });
     return updated;
   }
-  return event;
+  return live;
 }
 
 /**
- * For every active team with at least one member, select exactly ONE member
- * using a cryptographically secure RNG (crypto.randomInt) and persist the
- * choice in HiddenLevelAssignment. Idempotent: the `@@unique([teamId, eventId])`
- * constraint plus an existence check guarantee the selection is made once and
- * never re-rolled on subsequent calls. Broadcasts a per-team activation event
- * (admin-only channel) with the selected member.
+ * Select exactly ONE active member per team for THIS session using a secure
+ * RNG. Scoped to sessionId → a fresh selection every session. Idempotent via
+ * `@@unique([sessionId, teamId])` + existence check.
  */
-export async function assignHiddenLevelMembers(eventId: string): Promise<void> {
+export async function assignHiddenLevelMembers(sessionId: string): Promise<void> {
   const teams = await prisma.team.findMany({
     where: { active: true },
-    include: { memberships: { select: { userId: true } }, hiddenAssignments: true },
+    include: {
+      memberships: { select: { userId: true } },
+      hiddenAssignments: { where: { sessionId }, select: { id: true } },
+    },
   });
 
   for (const team of teams) {
-    if (team.hiddenAssignments.some((a) => a.eventId === eventId)) continue; // never re-roll
+    if (team.hiddenAssignments.length > 0) continue; // already assigned this session
     const memberIds = team.memberships.map((m) => m.userId);
     if (memberIds.length === 0) continue;
-
-    // Cryptographically secure uniform selection (not index-from-id/timestamp).
     const selectedUserId = memberIds[randomInt(0, memberIds.length)];
-
     try {
-      await prisma.hiddenLevelAssignment.create({
-        data: { eventId, teamId: team.id, selectedUserId },
-      });
-      broadcast({
-        type: 'HIDDEN_LEVEL_ACTIVATED',
-        payload: { teamId: team.id, selectedUserId },
-      });
+      await prisma.hiddenLevelAssignment.create({ data: { sessionId, teamId: team.id, selectedUserId } });
+      broadcast({ type: 'HIDDEN_LEVEL_ACTIVATED', payload: { sessionId, teamId: team.id, selectedUserId } });
     } catch (e) {
       if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
-      // Concurrent activation already created it — fine.
     }
   }
-}
-
-export function assertLive(event: Event): void {
-  if (event.status !== 'LIVE') throw Errors.eventNotLive();
 }

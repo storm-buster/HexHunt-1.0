@@ -48,9 +48,9 @@ describe('admin authentication', () => {
     const cookie = await loginAdmin(app);
     const start = await app.inject({ method: 'POST', url: '/api/admin/event/start', headers: { cookie } });
     expect(start.statusCode).toBe(200);
-    expect(JSON.parse(start.body).event.status).toBe('LIVE');
+    expect(JSON.parse(start.body).session.status).toBe('LIVE');
     const close = await app.inject({ method: 'POST', url: '/api/admin/event/close', headers: { cookie } });
     expect(close.statusCode).toBe(200);
-    expect(JSON.parse(close.body).event.status).toBe('CLOSED');
+    expect(JSON.parse(close.body).session.status).toBe('COMPLETED');
   });
 });

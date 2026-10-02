@@ -36,11 +36,17 @@ async function buildTeam(prefix: string, size: number): Promise<{ members: Membe
   return { members, teamId: await teamIdFor(ownerCookie) };
 }
 
+async function liveSessionId(): Promise<string> {
+  const event = await prisma.event.findFirst({ orderBy: { createdAt: 'desc' } });
+  const s = await prisma.eventSession.findFirst({ where: { eventId: event!.id, status: 'LIVE' }, orderBy: { sessionNumber: 'desc' } });
+  return s!.id;
+}
+
 // Force the T+30 boundary to have passed and run activation deterministically.
 async function activateHidden(): Promise<void> {
-  const event = await prisma.event.findFirst({ orderBy: { createdAt: 'desc' } });
-  await prisma.event.update({
-    where: { id: event!.id },
+  const sessionId = await liveSessionId();
+  await prisma.eventSession.update({
+    where: { id: sessionId },
     data: { hiddenActivationAt: new Date(Date.now() - 1000), hiddenActivated: false },
   });
   await refreshHiddenActivation(); // activates + assigns one member per team
@@ -53,9 +59,9 @@ function hiddenSubmit(cookie: string, answer: string) {
   return app.inject({ method: 'POST', url: '/api/hidden-level/submit', headers: { cookie }, payload: { answer } });
 }
 async function selectedUserId(teamId: string): Promise<string> {
-  const event = await prisma.event.findFirst({ orderBy: { createdAt: 'desc' } });
+  const sessionId = await liveSessionId();
   const a = await prisma.hiddenLevelAssignment.findUnique({
-    where: { teamId_eventId: { teamId, eventId: event!.id } },
+    where: { sessionId_teamId: { sessionId, teamId } },
   });
   return a!.selectedUserId;
 }
@@ -78,14 +84,14 @@ describe('hidden level — T+30 activation & per-team member selection', () => {
     await startEventAsAdmin(app);
     await activateHidden();
 
-    const event = await prisma.event.findFirst({ orderBy: { createdAt: 'desc' } });
+    const sessionId = await liveSessionId();
     const aAssigns = await prisma.hiddenLevelAssignment.findMany({ where: { teamId: A.teamId } });
     const bAssigns = await prisma.hiddenLevelAssignment.findMany({ where: { teamId: B.teamId } });
     expect(aAssigns.length).toBe(1);
     expect(bAssigns.length).toBe(1);
     expect(A.members.map((m) => m.userId)).toContain(aAssigns[0].selectedUserId);
     expect(B.members.map((m) => m.userId)).toContain(bAssigns[0].selectedUserId);
-    expect(aAssigns[0].eventId).toBe(event!.id);
+    expect(aAssigns[0].sessionId).toBe(sessionId);
 
     // Re-running activation must NOT re-roll the selection (idempotent).
     const before = aAssigns[0].selectedUserId;

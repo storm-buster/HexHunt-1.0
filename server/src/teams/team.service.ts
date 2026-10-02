@@ -2,7 +2,7 @@ import { customAlphabet } from 'nanoid';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { Errors } from '../middleware/errors.js';
-import { getActiveEvent } from '../events/event.service.js';
+import { getEvent } from '../events/event.service.js';
 
 export const MAX_TEAM_SIZE = 3;
 
@@ -53,7 +53,7 @@ export async function createTeam(userId: string, name: string): Promise<TeamView
   const trimmed = name.trim();
   if (trimmed.length < 2) throw Errors.badRequest('Team name must be at least 2 characters');
 
-  const event = await getActiveEvent();
+  const event = await getEvent();
 
   try {
     const team = await prisma.$transaction(async (tx) => {
