@@ -131,7 +131,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             <span>Hidden activation: {event?.event?.hiddenActivated ? fmtTime(event?.event?.hiddenActivationAt) : (status === 'LIVE' ? 'scheduled (hidden)' : '—')}</span>
           </div>
           <div className="btns">
-            <button onClick={doStart} disabled={status !== 'NOT_STARTED'}>▶ START CTF</button>
+            <button onClick={doStart} disabled={status === 'LIVE'}>▶ {status === 'CLOSED' ? 'REOPEN CTF' : 'START CTF'}</button>
             <button className="danger" onClick={doClose} disabled={status !== 'LIVE'}>■ CLOSE CTF</button>
           </div>
         </div>

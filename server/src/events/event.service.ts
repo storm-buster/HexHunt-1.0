@@ -62,26 +62,32 @@ export async function getEventView(includeHiddenSchedule = false): Promise<Event
 
 export async function startEvent(): Promise<Event> {
   const event = await requireEvent();
-  if (event.status === 'LIVE') return event;
-  if (event.status !== 'NOT_STARTED') {
-    throw Errors.conflict(`Cannot start event from status ${event.status}`);
-  }
+  if (event.status === 'LIVE') return event; // idempotent: already live
 
   const now = new Date();
-  // Fixed activation exactly HIDDEN_LEVEL_DELAY_MINUTES after start (default T+30).
-  const hiddenActivationAt = new Date(now.getTime() + config.hidden.delayMinutes * 60_000);
 
+  if (event.status === 'NOT_STARTED') {
+    // First start: set the authoritative start time and schedule hidden
+    // activation exactly HIDDEN_LEVEL_DELAY_MINUTES later (default T+30).
+    const hiddenActivationAt = new Date(now.getTime() + config.hidden.delayMinutes * 60_000);
+    const updated = await prisma.event.update({
+      where: { id: event.id },
+      data: { status: 'LIVE', startedAt: now, hiddenActivationAt, hiddenActivated: false },
+    });
+    broadcast({ type: 'CTF_STARTED', payload: { startedAt: updated.startedAt } });
+    return updated;
+  }
+
+  // CLOSED -> LIVE: reopen the SAME run (not a destructive reset, not a new
+  // event). Preserve startedAt, hiddenActivationAt and hiddenActivated so
+  // time-decay scoring and hidden-level timing keep using the ORIGINAL start.
+  // Only clear closedAt and flip status back to LIVE. Already-activated hidden
+  // assignments are intentionally left intact (never re-randomized).
   const updated = await prisma.event.update({
     where: { id: event.id },
-    data: {
-      status: 'LIVE',
-      startedAt: now,
-      hiddenActivationAt,
-      hiddenActivated: false,
-    },
+    data: { status: 'LIVE', closedAt: null },
   });
-
-  broadcast({ type: 'CTF_STARTED', payload: { startedAt: updated.startedAt } });
+  broadcast({ type: 'CTF_STARTED', payload: { startedAt: updated.startedAt, reopened: true } });
   return updated;
 }
 
