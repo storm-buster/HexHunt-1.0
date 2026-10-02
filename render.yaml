@@ -40,6 +40,13 @@ services:
       # (…-pooler) with sslmode=require. Do not disable TLS verification.
       - key: DATABASE_URL
         sync: false
+      # DIRECT (non-pooled) Neon connection — used by Prisma Migrate and by
+      # interactive transactions (archive+wipe, solve, team create/join,
+      # reset/cleanup), which a PgBouncer pooled endpoint breaks (P2028). Set to
+      # the Neon DIRECT endpoint (host WITHOUT "-pooler"), sslmode=require. Manual
+      # secret — never commit it. If omitted, the app falls back to DATABASE_URL.
+      - key: DIRECT_DATABASE_URL
+        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: COOKIE_SECRET

@@ -67,7 +67,9 @@ async function main(): Promise<void> {
   console.log('Applying migrations (prisma migrate deploy)…');
   execSync('npx prisma migrate deploy', {
     stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL: dbUrl },
+    // Migrate uses the schema's directUrl (DIRECT_DATABASE_URL). Prefer the
+    // explicit direct URL; fall back to the pooled URL when none is provided.
+    env: { ...process.env, DATABASE_URL: dbUrl, DIRECT_DATABASE_URL: process.env.DIRECT_DATABASE_URL ?? dbUrl },
   });
 
   // ── 2. Idempotent seed ───────────────────────────────────

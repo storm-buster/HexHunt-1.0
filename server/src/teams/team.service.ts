@@ -1,6 +1,6 @@
 import { customAlphabet } from 'nanoid';
 import { Prisma } from '@prisma/client';
-import { prisma } from '../db/prisma.js';
+import { prisma, txPrisma } from '../db/prisma.js';
 import { Errors } from '../middleware/errors.js';
 import { getEvent, requireParticipantSession } from '../events/event.service.js';
 
@@ -58,7 +58,7 @@ export async function createTeam(userId: string, name: string): Promise<TeamView
   const event = await getEvent();
 
   try {
-    const team = await prisma.$transaction(async (tx) => {
+    const team = await txPrisma.$transaction(async (tx) => {
       // A user may only belong to one active team.
       const existing = await tx.teamMembership.findUnique({ where: { userId } });
       if (existing) throw Errors.conflict('You already belong to a team');
@@ -93,7 +93,7 @@ export async function joinTeam(userId: string, inviteCode: string): Promise<Team
   const code = inviteCode.trim().toUpperCase();
   if (!code) throw Errors.badRequest('Invite code is required');
 
-  const teamId = await prisma.$transaction(async (tx) => {
+  const teamId = await txPrisma.$transaction(async (tx) => {
     const existing = await tx.teamMembership.findUnique({ where: { userId } });
     if (existing) throw Errors.conflict('You already belong to a team');
 

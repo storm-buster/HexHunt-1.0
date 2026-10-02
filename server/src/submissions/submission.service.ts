@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { prisma } from '../db/prisma.js';
+import { prisma, txPrisma } from '../db/prisma.js';
 import { Errors } from '../middleware/errors.js';
 import { verifySecret } from '../auth/password.js';
 import { requireLiveSession } from '../events/event.service.js';
@@ -51,7 +51,7 @@ export async function processSubmission(input: SubmitInput): Promise<SubmitOutco
   const awardedPoints = computeAwardedPoints(challenge.points, elapsed);
 
   try {
-    await prisma.$transaction(async (tx) => {
+    await txPrisma.$transaction(async (tx) => {
       // Unique(sessionId, teamId, challengeId) → single award even under
       // simultaneous correct submissions from two teammates in this session.
       await tx.solve.create({

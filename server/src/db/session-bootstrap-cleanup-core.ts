@@ -86,6 +86,9 @@ export async function cleanupLegacyPreArchiveState(prisma: PrismaClient): Promis
     select: { id: true },
   });
 
+  // Interactive transaction — the caller injects the Prisma client; the CLI
+  // connects it via DIRECT_DATABASE_URL (non-pooled) so this runs on a
+  // session-pinned connection (pooled endpoints break interactive transactions).
   await prisma.$transaction(async (tx) => {
     // Remove legacy session rows (cascades their Solve/Submission/Hidden* rows).
     if (legacySessions.length > 0) {

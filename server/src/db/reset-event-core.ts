@@ -43,6 +43,9 @@ export async function resetEventLifecycle(prisma: PrismaClient): Promise<ResetEv
     prisma.sessionArchive.count(),
   ]);
 
+  // Interactive transaction — the caller injects the Prisma client; the CLI
+  // connects it via DIRECT_DATABASE_URL (non-pooled) so this runs on a
+  // session-pinned connection (pooled endpoints break interactive transactions).
   await prisma.$transaction(async (tx) => {
     if (live) await tx.eventSession.delete({ where: { id: live.id } }); // cascades gameplay
     // Defensive: clear any orphan gameplay rows not tied to the live session.

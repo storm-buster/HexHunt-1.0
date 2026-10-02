@@ -34,6 +34,33 @@ function list(name: string, fallback: string[]): string[] {
 const isTest = process.env.NODE_ENV === 'test';
 const isProd = process.env.NODE_ENV === 'production';
 
+// Pooled connection for normal runtime queries (Neon …-pooler in production).
+const databaseUrl = isTest
+  ? req('TEST_DATABASE_URL', process.env.DATABASE_URL)
+  : req('DATABASE_URL');
+
+// Direct (non-pooled) connection used ONLY for interactive Prisma transactions,
+// which require a session-pinned connection (PgBouncer transaction-mode pooling
+// breaks them → P2028 "Transaction not found"). In test mode it MUST stay on the
+// test database (localhost is already a direct connection), ignoring any dev
+// DIRECT_DATABASE_URL loaded from .env. Elsewhere it uses DIRECT_DATABASE_URL,
+// falling back to the pooled URL when unset.
+const directDatabaseUrl = isTest
+  ? databaseUrl
+  : process.env.DIRECT_DATABASE_URL?.trim() || databaseUrl;
+
+// In production a pooled DATABASE_URL without a separate DIRECT_DATABASE_URL
+// means interactive transactions run over the pooler and may fail. Warn (no
+// secret/URL printed) so the misconfiguration is visible in logs.
+if (isProd && !process.env.DIRECT_DATABASE_URL?.trim()) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[config] DIRECT_DATABASE_URL is not set — interactive transactions will use the pooled ' +
+      'DATABASE_URL and may fail (P2028) on a PgBouncer/pooled endpoint. Set DIRECT_DATABASE_URL ' +
+      'to the Neon direct (non-pooler) connection string.',
+  );
+}
+
 export const config = {
   env: process.env.NODE_ENV ?? 'development',
   isTest,
@@ -43,9 +70,8 @@ export const config = {
   host: process.env.HOST ?? '0.0.0.0',
   logLevel: process.env.LOG_LEVEL ?? 'info',
 
-  databaseUrl: isTest
-    ? req('TEST_DATABASE_URL', process.env.DATABASE_URL)
-    : req('DATABASE_URL'),
+  databaseUrl,
+  directDatabaseUrl,
 
   jwtSecret: req('JWT_SECRET', isTest ? 'test-jwt-secret-0123456789abcdef0123456789abcdef' : undefined),
   cookieSecret: req('COOKIE_SECRET', isTest ? 'test-cookie-secret-0123456789abcdef0123456789abcdef' : undefined),

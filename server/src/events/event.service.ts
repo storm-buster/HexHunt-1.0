@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto';
 import type { Event, EventSession } from '@prisma/client';
 import { Prisma } from '@prisma/client';
-import { prisma } from '../db/prisma.js';
+import { prisma, txPrisma } from '../db/prisma.js';
 import { config } from '../config/index.js';
 import { Errors } from '../middleware/errors.js';
 import { broadcast, disconnectPlayers } from '../realtime/hub.js';
@@ -227,8 +227,9 @@ export async function stopSession(): Promise<StopResult> {
   // 1) Build the full immutable snapshot BEFORE any deletion.
   const built = await buildSessionSnapshot(sessionForSnapshot, event.name);
 
-  // 2) Archive + wipe atomically.
-  const archive = await prisma.$transaction(async (tx) => {
+  // 2) Archive + wipe atomically (direct client — interactive transaction needs
+  //    a session-pinned connection; the pooled endpoint breaks it).
+  const archive = await txPrisma.$transaction(async (tx) => {
     const created = await tx.sessionArchive.create({
       data: {
         sessionNumber: built.scalars.sessionNumber,

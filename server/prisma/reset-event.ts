@@ -26,8 +26,11 @@ async function main(): Promise<void> {
   }
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl || !dbUrl.trim()) abort('DATABASE_URL is required in the environment');
+  // This tool runs an interactive transaction → use the DIRECT (non-pooled)
+  // connection when provided; pooled endpoints break interactive transactions.
+  const connUrl = (process.env.DIRECT_DATABASE_URL?.trim() || dbUrl.trim());
 
-  const prisma = new PrismaClient({ datasources: { db: { url: dbUrl.trim() } } });
+  const prisma = new PrismaClient({ datasources: { db: { url: connUrl } } });
   try {
     const archivesBefore = await prisma.sessionArchive.count();
     const result = await resetEventLifecycle(prisma);

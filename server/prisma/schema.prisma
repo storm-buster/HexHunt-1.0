@@ -6,8 +6,13 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Migrations/introspection run over the DIRECT (non-pooled) connection; a
+  // PgBouncer pooled endpoint is not reliable for DDL/advisory locks. Falls
+  // back to DATABASE_URL in environments where that var is unset (handled by
+  // tooling that passes DIRECT_DATABASE_URL=DATABASE_URL when no pooler exists).
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 enum Role {

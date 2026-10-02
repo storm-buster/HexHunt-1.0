@@ -39,8 +39,12 @@ async function main(): Promise<void> {
   }
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl || !dbUrl.trim()) abort('DATABASE_URL is required in the environment');
+  // Cleanup runs an interactive transaction → connect via the DIRECT (non-pooled)
+  // endpoint when provided (pooled/PgBouncer endpoints break interactive
+  // transactions with P2028). Guards below run against the URL we actually use.
+  const connUrl = process.env.DIRECT_DATABASE_URL?.trim() || dbUrl.trim();
 
-  const lower = dbUrl.toLowerCase();
+  const lower = connUrl.toLowerCase();
   // Always refuse known dev/test databases.
   if (lower.includes('doomsday_ctf_test') || /\/doomsday_ctf(\?|$)/.test(lower)) {
     abort('DATABASE_URL points at a known development/test database — refusing');
@@ -48,12 +52,12 @@ async function main(): Promise<void> {
   // Refuse localhost unless explicitly allowed for disposable-DB testing.
   const isLocal = lower.includes('localhost') || lower.includes('127.0.0.1');
   if (isLocal && process.env.SESSION_BOOTSTRAP_ALLOW_LOCAL !== 'YES') {
-    abort('DATABASE_URL looks like localhost — refusing (set SESSION_BOOTSTRAP_ALLOW_LOCAL=YES only to test against a disposable local DB)');
+    abort('target DB looks like localhost — refusing (set SESSION_BOOTSTRAP_ALLOW_LOCAL=YES only to test against a disposable local DB)');
   }
 
-  console.log(`cleanup:sessions → target DB: ${maskHost(dbUrl)}`);
+  console.log(`cleanup:sessions → target DB: ${maskHost(connUrl)}`);
 
-  const prisma = new PrismaClient({ datasources: { db: { url: dbUrl.trim() } } });
+  const prisma = new PrismaClient({ datasources: { db: { url: connUrl } } });
   try {
     const result = await cleanupLegacyPreArchiveState(prisma);
 
