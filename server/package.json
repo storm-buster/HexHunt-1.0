@@ -18,6 +18,7 @@
     "bootstrap:render": "tsx prisma/bootstrap-render.ts",
     "verify:render-admin": "tsx prisma/verify-render-admin.ts",
     "reset:event": "tsx prisma/reset-event.ts",
+    "cleanup:sessions": "tsx prisma/session-bootstrap-cleanup.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

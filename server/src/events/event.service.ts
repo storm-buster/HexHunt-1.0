@@ -115,14 +115,25 @@ export async function startSession(): Promise<EventSession> {
   });
   if (existingLive) return existingLive;
 
+  // Authoritative numbering comes ONLY from the immutable archives, so the
+  // first real session is #1 even if a legacy pre-archive EventSession row
+  // lingers. createLiveSession() reclaims such an orphan row if it collides.
+  const sessionNumber = await nextSessionNumber(); // (max archived #) + 1
+  return createLiveSession(event.id, sessionNumber, true);
+}
+
+async function createLiveSession(
+  eventId: string,
+  sessionNumber: number,
+  allowOrphanReclaim: boolean,
+): Promise<EventSession> {
   const now = new Date();
   const hiddenActivationAt = new Date(now.getTime() + config.hidden.delayMinutes * 60_000);
-  const sessionNumber = await nextSessionNumber(); // (max archived #) + 1
 
   try {
     const created = await prisma.eventSession.create({
       data: {
-        eventId: event.id,
+        eventId,
         sessionNumber,
         status: 'LIVE',
         startedAt: now,
@@ -133,16 +144,49 @@ export async function startSession(): Promise<EventSession> {
     broadcast({ type: 'CTF_STARTED', payload: { sessionId: created.id, sessionNumber } });
     return created;
   } catch (e) {
-    // Lost a race (partial-unique one-LIVE index, or sessionNumber unique) →
-    // return the session that won.
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      // (a) A LIVE session won a start race (one-LIVE-per-event index) →
+      //     idempotent: return the live session, never delete it.
       const live = await prisma.eventSession.findFirst({
-        where: { eventId: event.id, status: 'LIVE' },
+        where: { eventId, status: 'LIVE' },
       });
       if (live) return live;
+
+      // (b) The collision is a stale NON-LIVE orphan on this sessionNumber left
+      //     by the pre-archive architecture. Reclaim it (once) so the first real
+      //     session keeps its intended number instead of being bumped to #2.
+      if (allowOrphanReclaim && (await reclaimOrphanSessionRow(eventId, sessionNumber))) {
+        return createLiveSession(eventId, sessionNumber, false); // retry once, no further reclaim
+      }
     }
     throw e;
   }
+}
+
+/**
+ * Explicit, tightly-scoped reclaim of an ORPHAN session number: a NON-LIVE
+ * `EventSession` row (left by the old pre-archive lifecycle) whose number has NO
+ * corresponding `SessionArchive`. Deleting it cascades its legacy
+ * solves/submissions/hidden rows and frees the number for the first real
+ * session. Returns true if a row was reclaimed.
+ *
+ * Safety invariants:
+ *  - NEVER touches a LIVE session (status filtered to non-LIVE).
+ *  - NEVER overwrites archived history (refuses if the number is in SessionArchive).
+ */
+async function reclaimOrphanSessionRow(eventId: string, sessionNumber: number): Promise<boolean> {
+  // Never overwrite a completed, archived session.
+  const archived = await prisma.sessionArchive.findUnique({ where: { sessionNumber } });
+  if (archived) return false;
+
+  const stale = await prisma.eventSession.findFirst({
+    where: { eventId, sessionNumber, status: { not: 'LIVE' } },
+  });
+  if (!stale) return false;
+
+  // Cascades the orphan session's legacy Solve/Submission/HiddenLevel* rows.
+  await prisma.eventSession.delete({ where: { id: stale.id } });
+  return true;
 }
 
 export interface StopResult {
