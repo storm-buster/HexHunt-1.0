@@ -4,7 +4,8 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { config } from '../config/index.js';
 import { Errors } from '../middleware/errors.js';
-import { broadcast } from '../realtime/hub.js';
+import { broadcast, disconnectPlayers } from '../realtime/hub.js';
+import { buildSessionSnapshot, nextSessionNumber } from '../admin/archive.service.js';
 
 // One persistent Event container per deployment; gameplay happens in sessions.
 export async function getEvent(): Promise<Event | null> {
@@ -40,17 +41,29 @@ export async function requireLiveSession(): Promise<EventSession> {
   return session;
 }
 
-// ── Event/session view (status derived from sessions) ───────
+// Is a session currently LIVE? (used to gate participant registration/login/teams)
+export async function isSessionLive(): Promise<boolean> {
+  return (await getCurrentSession()) !== null;
+}
+
+// Participant-facing gate: registration, player login, and team create/join are
+// only permitted while a session is LIVE. Between STOP and START the live
+// participant state must stay empty, so these are rejected with a generic
+// "CTF session is not active" response. (Admin login bypasses this.)
+export async function requireParticipantSession(): Promise<void> {
+  if (!(await isSessionLive())) throw Errors.sessionNotActive();
+}
+
+// ── Event/session view (status derived from the single live session) ──
 export interface EventView {
   id: string;
   name: string;
-  status: 'NOT_STARTED' | 'LIVE' | 'COMPLETED';
+  status: 'NOT_STARTED' | 'LIVE';
   session: {
     id: string;
     sessionNumber: number;
-    status: 'LIVE' | 'COMPLETED';
+    status: 'LIVE';
     startedAt: Date;
-    completedAt: Date | null;
   } | null;
   serverTime: string;
   hidden: { activated: boolean; activatedAt: Date | null };
@@ -59,32 +72,22 @@ export interface EventView {
 export async function getEventView(includeHiddenSchedule = false): Promise<EventView> {
   const event = await requireEvent();
   // Flip hidden activation lazily for the live session (if any).
-  await refreshHiddenActivation();
+  const live = await refreshHiddenActivation();
 
-  const live = await prisma.eventSession.findFirst({
-    where: { eventId: event.id, status: 'LIVE' },
-    orderBy: { sessionNumber: 'desc' },
-  });
-  const session =
-    live ??
-    (await prisma.eventSession.findFirst({
-      where: { eventId: event.id },
-      orderBy: { sessionNumber: 'desc' },
-    }));
-
-  const status: EventView['status'] = live ? 'LIVE' : session ? 'COMPLETED' : 'NOT_STARTED';
+  // Players only ever see the current LIVE session. Completed sessions are
+  // archived (admin-only) and the live tables are empty between sessions.
+  const status: EventView['status'] = live ? 'LIVE' : 'NOT_STARTED';
 
   return {
     id: event.id,
     name: event.name,
     status,
-    session: session
+    session: live
       ? {
-          id: session.id,
-          sessionNumber: session.sessionNumber,
-          status: session.status,
-          startedAt: session.startedAt,
-          completedAt: session.completedAt,
+          id: live.id,
+          sessionNumber: live.sessionNumber,
+          status: 'LIVE',
+          startedAt: live.startedAt,
         }
       : null,
     serverTime: new Date().toISOString(),
@@ -99,7 +102,10 @@ export async function getEventView(includeHiddenSchedule = false): Promise<Event
   };
 }
 
-// ── START: always create a NEW session (never reopen) ───────
+// ── START: always a NEW, EMPTY session (never reopen) ───────
+// The live tables are already empty (wiped at the previous STOP / reset / fresh
+// deploy), so a session simply begins with fresh timers. The session number is
+// derived from the immutable archives, so it keeps counting up forever.
 export async function startSession(): Promise<EventSession> {
   const event = await requireEvent();
 
@@ -111,11 +117,7 @@ export async function startSession(): Promise<EventSession> {
 
   const now = new Date();
   const hiddenActivationAt = new Date(now.getTime() + config.hidden.delayMinutes * 60_000);
-  const last = await prisma.eventSession.findFirst({
-    where: { eventId: event.id },
-    orderBy: { sessionNumber: 'desc' },
-  });
-  const sessionNumber = (last?.sessionNumber ?? 0) + 1;
+  const sessionNumber = await nextSessionNumber(); // (max archived #) + 1
 
   try {
     const created = await prisma.eventSession.create({
@@ -143,8 +145,20 @@ export async function startSession(): Promise<EventSession> {
   }
 }
 
-// ── STOP: complete the current LIVE session (archive it) ────
-export async function stopSession(): Promise<EventSession> {
+export interface StopResult {
+  sessionNumber: number;
+  archiveId: string | null;
+  alreadyStopped: boolean;
+}
+
+// ── STOP: finalize → archive → WIPE all live participant/gameplay state ──
+// 1) Snapshot the entire live session (read-only).
+// 2) In one transaction: persist the immutable SessionArchive, then delete the
+//    live session (cascades solves/submissions/hidden), all teams (cascades
+//    memberships) and all PLAYER users. The admin account and challenge
+//    definitions are preserved. Historical archives are never touched.
+// 3) Disconnect player sockets. There is NO reopen.
+export async function stopSession(): Promise<StopResult> {
   const event = await requireEvent();
   const live = await prisma.eventSession.findFirst({
     where: { eventId: event.id, status: 'LIVE' },
@@ -152,21 +166,60 @@ export async function stopSession(): Promise<EventSession> {
   });
 
   if (!live) {
-    // Idempotent if a prior session exists; invalid if nothing ever started.
-    const anySession = await prisma.eventSession.findFirst({
-      where: { eventId: event.id },
-      orderBy: { sessionNumber: 'desc' },
-    });
-    if (anySession) return anySession; // already completed — safe no-op
+    // Safe no-op if at least one session has already completed (archived);
+    // reject only if nothing has ever started.
+    const archivedCount = await prisma.sessionArchive.count();
+    if (archivedCount > 0) {
+      const top = await prisma.sessionArchive.findFirst({ orderBy: { sessionNumber: 'desc' } });
+      return { sessionNumber: top!.sessionNumber, archiveId: top!.id, alreadyStopped: true };
+    }
     throw Errors.conflict('No session is running');
   }
 
-  const updated = await prisma.eventSession.update({
-    where: { id: live.id },
-    data: { status: 'COMPLETED', completedAt: new Date() },
+  // Mark completedAt on the in-memory copy for an accurate archive timestamp.
+  const completedAt = new Date();
+  const sessionForSnapshot: EventSession = { ...live, status: 'COMPLETED', completedAt };
+
+  // 1) Build the full immutable snapshot BEFORE any deletion.
+  const built = await buildSessionSnapshot(sessionForSnapshot, event.name);
+
+  // 2) Archive + wipe atomically.
+  const archive = await prisma.$transaction(async (tx) => {
+    const created = await tx.sessionArchive.create({
+      data: {
+        sessionNumber: built.scalars.sessionNumber,
+        eventName: built.scalars.eventName,
+        startedAt: built.scalars.startedAt,
+        completedAt: built.scalars.completedAt,
+        durationSeconds: built.scalars.durationSeconds,
+        numberOfUsers: built.scalars.numberOfUsers,
+        numberOfTeams: built.scalars.numberOfTeams,
+        totalSolves: built.scalars.totalSolves,
+        totalSubmissions: built.scalars.totalSubmissions,
+        highestScore: built.scalars.highestScore,
+        hiddenAttempts: built.scalars.hiddenAttempts,
+        hiddenCorrect: built.scalars.hiddenCorrect,
+        hiddenIncorrect: built.scalars.hiddenIncorrect,
+        data: built.snapshot as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    // Deleting the live session cascades Solve/Submission/HiddenLevelResult/
+    // HiddenLevelAssignment for the session.
+    await tx.eventSession.delete({ where: { id: live.id } });
+    // Deleting teams cascades their memberships; then remove player accounts.
+    await tx.teamMembership.deleteMany({});
+    await tx.team.deleteMany({});
+    await tx.user.deleteMany({ where: { role: 'PLAYER' } });
+
+    return created;
   });
-  broadcast({ type: 'CTF_CLOSED', payload: { sessionId: updated.id, sessionNumber: updated.sessionNumber } });
-  return updated;
+
+  // 3) Kick stale player sockets; notify admins.
+  disconnectPlayers();
+  broadcast({ type: 'CTF_CLOSED', payload: { sessionNumber: built.scalars.sessionNumber, archiveId: archive.id } });
+
+  return { sessionNumber: built.scalars.sessionNumber, archiveId: archive.id, alreadyStopped: false };
 }
 
 // Lazily flip hidden activation for the LIVE session when its scheduled time

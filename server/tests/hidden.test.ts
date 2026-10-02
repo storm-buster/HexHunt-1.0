@@ -11,7 +11,7 @@ const HIDDEN_FLAG = 'DOOM{d00d5f3a}';
 let app: FastifyInstance;
 beforeAll(async () => { app = await makeApp(); });
 afterAll(async () => { await app.close(); });
-beforeEach(async () => { await resetState(); });
+beforeEach(async () => { await resetState(); await startEventAsAdmin(app); });
 
 interface Member { email: string; cookie: string; userId: string }
 

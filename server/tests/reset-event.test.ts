@@ -4,7 +4,7 @@ import {
   makeApp, resetState, registerPlayer, createTeam, startEventAsAdmin, stopEventAsAdmin, loginAdmin, prisma,
 } from './helpers.js';
 import { resetEventLifecycle } from '../src/db/reset-event-core.js';
-import { startSession, stopSession } from '../src/events/event.service.js';
+import { startSession } from '../src/events/event.service.js';
 
 let app: FastifyInstance;
 beforeAll(async () => { app = await makeApp(); });
@@ -13,66 +13,72 @@ beforeEach(async () => { await resetState(); });
 
 const WV01 = 'DOOM{a3f19c2b}';
 
-describe('reset:event (operator session reset)', () => {
-  it('deletes the current LIVE session and its gameplay, leaving no live session', async () => {
+describe('reset:event (operator LIVE-state wipe, never archives)', () => {
+  it('wipes all live participant/gameplay state (no archive created)', async () => {
+    await startEventAsAdmin(app);
     const p = await registerPlayer(app, 'Keeper', 'keep@x.com');
     await createTeam(app, p, 'Keepers');
-    await startEventAsAdmin(app);
     await app.inject({ method: 'POST', url: '/api/submissions', headers: { cookie: p }, payload: { challengeId: 'wv-01', flag: WV01 } });
     expect(await prisma.solve.count()).toBe(1);
 
     const res = await resetEventLifecycle(prisma);
-    expect(res!.deletedLiveSession).toBe(true);
-    expect(res!.clearedSolves).toBe(1);
+    expect(res.deletedLiveSession).toBe(true);
+    expect(res.clearedUsers).toBe(1);
+    expect(res.clearedTeams).toBe(1);
+    expect(res.clearedSolves).toBe(1);
 
-    // No LIVE session remains; its gameplay is gone (cascade).
-    expect(await prisma.eventSession.count({ where: { status: 'LIVE' } })).toBe(0);
+    expect(await prisma.user.count({ where: { role: 'PLAYER' } })).toBe(0);
+    expect(await prisma.team.count()).toBe(0);
+    expect(await prisma.teamMembership.count()).toBe(0);
     expect(await prisma.solve.count()).toBe(0);
     expect(await prisma.submission.count()).toBe(0);
+    expect(await prisma.eventSession.count()).toBe(0);
+    // reset does NOT archive.
+    expect(await prisma.sessionArchive.count()).toBe(0);
   });
 
-  it('preserves users, teams, memberships, challenges, event, and COMPLETED sessions', async () => {
-    const p = await registerPlayer(app, 'Keeper', 'keep2@x.com');
-    await createTeam(app, p, 'Keepers2');
-    // Session 1: play then complete (becomes historical).
+  it('preserves admin, challenges, Event, and ALL completed-session archives', async () => {
+    const admin = await loginAdmin(app);
+    // Produce an archive (session 1 stop).
     await startEventAsAdmin(app);
+    const p = await registerPlayer(app, 'Hist', 'hist@x.com');
+    await createTeam(app, p, 'Historians');
     await app.inject({ method: 'POST', url: '/api/submissions', headers: { cookie: p }, payload: { challengeId: 'wv-01', flag: WV01 } });
     await stopEventAsAdmin(app);
-    const completedSolves = await prisma.solve.count();
-    expect(completedSolves).toBe(1);
+    expect(await prisma.sessionArchive.count()).toBe(1);
 
-    // Session 2: live, then reset.
-    await startEventAsAdmin(app);
-    const before = {
-      users: await prisma.user.count(),
-      teams: await prisma.team.count(),
-      memberships: await prisma.teamMembership.count(),
-    };
+    // Start session 2 live, then reset it.
+    await app.inject({ method: 'POST', url: '/api/admin/event/start', headers: { cookie: admin } });
+    const challengesBefore = await prisma.challenge.count();
 
     await resetEventLifecycle(prisma);
 
-    expect(await prisma.user.count()).toBe(before.users);
-    expect(await prisma.team.count()).toBe(before.teams);
-    expect(await prisma.teamMembership.count()).toBe(before.memberships);
+    expect(await prisma.user.count({ where: { role: 'ADMIN' } })).toBe(1);
+    expect(await prisma.challenge.count()).toBe(challengesBefore);
     expect(await prisma.event.count()).toBe(1);
-    // Historical COMPLETED session + its solves survive.
-    expect(await prisma.eventSession.count({ where: { status: 'COMPLETED' } })).toBe(1);
-    expect(await prisma.solve.count()).toBe(completedSolves);
+    // Archive from session 1 is untouched.
+    expect(await prisma.sessionArchive.count()).toBe(1);
+    const archive = await prisma.sessionArchive.findFirst();
+    expect(archive!.sessionNumber).toBe(1);
+    expect(archive!.totalSolves).toBe(1);
   });
 
-  it('is a safe no-op when there is no live session', async () => {
+  it('is a safe no-op when there is no live session or participants', async () => {
     const res = await resetEventLifecycle(prisma);
-    expect(res!.deletedLiveSession).toBe(false);
-    expect(res!.sessionNumber).toBeNull();
+    expect(res.deletedLiveSession).toBe(false);
+    expect(res.clearedUsers).toBe(0);
+    expect(res.clearedTeams).toBe(0);
   });
 
-  it('allows START again after reset (fresh new session number)', async () => {
-    await startEventAsAdmin(app);  // session 1
-    await resetEventLifecycle(prisma); // delete session 1
-    const started = await startSession(); // becomes session 1 again (max was deleted)
+  it('allows START again after reset (session numbering continues from archives)', async () => {
+    const admin = await loginAdmin(app);
+    await startEventAsAdmin(app);          // session 1
+    await stopEventAsAdmin(app);           // archive #1
+    await app.inject({ method: 'POST', url: '/api/admin/event/start', headers: { cookie: admin } }); // session 2 live
+    await resetEventLifecycle(prisma);     // wipe live session 2 (not archived)
+    const started = await startSession();  // next number = maxArchive(1)+1 = 2
     expect(started.status).toBe('LIVE');
-    const closed = await stopSession();
-    expect(closed.status).toBe('COMPLETED');
+    expect(started.sessionNumber).toBe(2);
   });
 
   it('is NOT reachable via any API route', async () => {

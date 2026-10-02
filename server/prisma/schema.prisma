@@ -99,6 +99,33 @@ model Event {
   sessions EventSession[]
 }
 
+// ── SessionArchive (immutable historical snapshot) ──────────
+// Written once at STOP, BEFORE the live participant/gameplay tables are wiped.
+// Completely independent of User/Team/EventSession (no FKs), so the live reset
+// cannot affect it. `data` holds the full session dataset used for admin-only
+// ZIP export; the scalar columns support the history listing. NEVER contains
+// password hashes, tokens, flags, or answers. Never updated after creation.
+model SessionArchive {
+  id               String   @id @default(cuid())
+  sessionNumber    Int      @unique
+  eventName        String
+  startedAt        DateTime
+  completedAt      DateTime
+  durationSeconds  Int
+  numberOfUsers    Int
+  numberOfTeams    Int
+  totalSolves      Int
+  totalSubmissions Int
+  highestScore     Int
+  hiddenAttempts   Int
+  hiddenCorrect    Int
+  hiddenIncorrect  Int
+  data             Json
+  createdAt        DateTime @default(now())
+
+  @@index([sessionNumber])
+}
+
 // ── EventSession (one START→STOP run) ───────────────────────
 // Each START creates a new session; STOP marks it COMPLETED (archived). All
 // gameplay is scoped to a session. Only ONE LIVE session may exist per event

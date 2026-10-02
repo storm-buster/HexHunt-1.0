@@ -1,55 +1,75 @@
 import type { PrismaClient } from '@prisma/client';
+import { disconnectPlayers } from '../realtime/hub.js';
 
-// Config-free operator/test tool. Removes the CURRENT LIVE session (and its
-// gameplay, via FK cascade) so a fresh rehearsal can START a new session.
-// It NEVER touches COMPLETED (historical) sessions, users, teams, memberships,
-// or challenge definitions, and never deletes/recreates the Event container.
+// Operator/test tool. Performs the LIVE-state wipe WITHOUT archiving — a hard
+// discard of the current competition's participant/gameplay data so a fresh
+// rehearsal can START cleanly.
+//
+// Deletes: the live session (+cascaded solves/submissions/hidden), all teams
+// (+cascaded memberships), and all PLAYER users.
+// PRESERVES: admin accounts, challenge definitions, the Event container, and —
+// critically — ALL completed-session archives (SessionArchive is never touched).
 
 export interface ResetEventResult {
-  eventId: string;
+  eventId: string | null;
   deletedLiveSession: boolean;
   sessionNumber: number | null;
+  clearedUsers: number;
+  clearedTeams: number;
+  clearedMemberships: number;
   clearedSolves: number;
   clearedSubmissions: number;
   clearedHiddenAssignments: number;
   clearedHiddenResults: number;
+  preservedArchives: number;
 }
 
-export async function resetEventLifecycle(
-  prisma: PrismaClient,
-): Promise<ResetEventResult | null> {
+export async function resetEventLifecycle(prisma: PrismaClient): Promise<ResetEventResult> {
   const event = await prisma.event.findFirst({ orderBy: { createdAt: 'desc' } });
-  if (!event) return null;
 
-  const live = await prisma.eventSession.findFirst({
-    where: { eventId: event.id, status: 'LIVE' },
-    orderBy: { sessionNumber: 'desc' },
-  });
+  const live = event
+    ? await prisma.eventSession.findFirst({ where: { eventId: event.id, status: 'LIVE' }, orderBy: { sessionNumber: 'desc' } })
+    : null;
 
-  if (!live) {
-    return {
-      eventId: event.id, deletedLiveSession: false, sessionNumber: null,
-      clearedSolves: 0, clearedSubmissions: 0, clearedHiddenAssignments: 0, clearedHiddenResults: 0,
-    };
-  }
-
-  const [solves, submissions, assignments, results] = await Promise.all([
-    prisma.solve.count({ where: { sessionId: live.id } }),
-    prisma.submission.count({ where: { sessionId: live.id } }),
-    prisma.hiddenLevelAssignment.count({ where: { sessionId: live.id } }),
-    prisma.hiddenLevelResult.count({ where: { sessionId: live.id } }),
+  // Count live state (for the operator report) before deleting.
+  const [users, teams, memberships, solves, submissions, assignments, results, archives] = await Promise.all([
+    prisma.user.count({ where: { role: 'PLAYER' } }),
+    prisma.team.count(),
+    prisma.teamMembership.count(),
+    prisma.solve.count(),
+    prisma.submission.count(),
+    prisma.hiddenLevelAssignment.count(),
+    prisma.hiddenLevelResult.count(),
+    prisma.sessionArchive.count(),
   ]);
 
-  // Deleting the live session cascades to its solves/submissions/hidden rows.
-  await prisma.eventSession.delete({ where: { id: live.id } });
+  await prisma.$transaction(async (tx) => {
+    if (live) await tx.eventSession.delete({ where: { id: live.id } }); // cascades gameplay
+    // Defensive: clear any orphan gameplay rows not tied to the live session.
+    await tx.hiddenLevelAssignment.deleteMany({});
+    await tx.hiddenLevelResult.deleteMany({});
+    await tx.submission.deleteMany({});
+    await tx.solve.deleteMany({});
+    await tx.eventSession.deleteMany({}); // remove any other (non-live) session rows
+    await tx.teamMembership.deleteMany({});
+    await tx.team.deleteMany({});
+    await tx.user.deleteMany({ where: { role: 'PLAYER' } });
+    // NOTE: prisma.sessionArchive is intentionally NOT touched.
+  });
+
+  disconnectPlayers();
 
   return {
-    eventId: event.id,
-    deletedLiveSession: true,
-    sessionNumber: live.sessionNumber,
+    eventId: event?.id ?? null,
+    deletedLiveSession: !!live,
+    sessionNumber: live?.sessionNumber ?? null,
+    clearedUsers: users,
+    clearedTeams: teams,
+    clearedMemberships: memberships,
     clearedSolves: solves,
     clearedSubmissions: submissions,
     clearedHiddenAssignments: assignments,
     clearedHiddenResults: results,
+    preservedArchives: archives,
   };
 }

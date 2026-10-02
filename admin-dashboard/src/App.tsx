@@ -110,7 +110,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
   const status = event?.status ?? 'NOT_STARTED';
   const session = event?.session ?? null;
-  const startLabel = status === 'LIVE' ? 'START CTF' : status === 'COMPLETED' ? 'START NEW SESSION' : 'START CTF';
+  const statusText = status === 'NO_ACTIVE_SESSION' ? 'NO ACTIVE SESSION' : status;
+  const startLabel = status === 'NO_ACTIVE_SESSION' ? 'START NEW SESSION' : 'START CTF';
 
   return (
     <div className="dash">
@@ -128,11 +129,11 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       <section className="panel">
         <h2>Event Control</h2>
         <div className="event-control">
-          <div className={`status-badge ${status}`}>CTF STATUS: {status}{session ? ` · SESSION #${session.sessionNumber}` : ''}</div>
+          <div className={`status-badge ${status}`}>CTF STATUS: {statusText}{session ? ` · SESSION #${session.sessionNumber}` : ''}</div>
           <div className="event-times">
             <span>Start: {fmtTime(session?.startedAt)}</span>
-            <span>Completed: {fmtTime(session?.completedAt)}</span>
             <span>Hidden activation: {session?.hiddenActivated ? fmtTime(session?.hiddenActivationAt) : (status === 'LIVE' ? 'scheduled (hidden)' : '—')}</span>
+            <span>Completed sessions: {event?.completedSessions ?? 0}</span>
           </div>
           <div className="btns">
             <button onClick={doStart} disabled={status === 'LIVE'}>▶ {startLabel}</button>

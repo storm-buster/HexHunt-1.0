@@ -75,3 +75,19 @@ export function broadcastToTeam(teamId: string, message: RealtimeMessage): void 
     if (meta.teamId === teamId) sendTo(socket, data);
   }
 }
+
+// Forcibly disconnect every PLAYER socket (admins stay connected). Used when the
+// live session is wiped (STOP / reset) so stale players from the finished
+// session cannot keep a connection — their accounts no longer exist.
+export function disconnectPlayers(): void {
+  for (const [socket, meta] of clients) {
+    if (meta.role !== 'PLAYER') continue;
+    try {
+      sendTo(socket, serialize({ type: 'CTF_CLOSED', payload: { reason: 'session_ended' } }));
+      if (socket.readyState === socket.OPEN) socket.close(1000, 'session ended');
+    } catch {
+      /* ignore */
+    }
+    clients.delete(socket);
+  }
+}

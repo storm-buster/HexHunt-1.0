@@ -7,7 +7,7 @@ import {
 let app: FastifyInstance;
 beforeAll(async () => { app = await makeApp(); });
 afterAll(async () => { await app.close(); });
-beforeEach(async () => { await resetState(); });
+beforeEach(async () => { await resetState(); await startEventAsAdmin(app); });
 
 const FLAGS: Record<string, string> = {
   'wv-01': 'DOOM{a3f19c2b}',

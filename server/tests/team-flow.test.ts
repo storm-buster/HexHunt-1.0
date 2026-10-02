@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { makeApp, resetState, registerPlayer, createTeam, sessionCookie } from './helpers.js';
+import { makeApp, resetState, registerPlayer, createTeam, sessionCookie, startEventAsAdmin } from './helpers.js';
 
 let app: FastifyInstance;
 beforeAll(async () => { app = await makeApp(); });
 afterAll(async () => { await app.close(); });
-beforeEach(async () => { await resetState(); });
+beforeEach(async () => { await resetState(); await startEventAsAdmin(app); });
 
 // Backend contract that the player Team page depends on. A shape mismatch here
 // (e.g. team present without a `members` array) is what would blank the page.

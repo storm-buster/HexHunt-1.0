@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { makeApp, resetState, registerPlayer, loginAdmin, prisma } from './helpers.js';
+import { makeApp, resetState, registerPlayer, loginAdmin, startEventAsAdmin, prisma } from './helpers.js';
 import { verifyPassword } from '../src/auth/password.js';
 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL ?? 'admin@doomsday.ctf').toLowerCase();
@@ -39,6 +39,7 @@ describe('admin authentication', () => {
   });
 
   it('TEST 8 — a non-admin player cannot access admin endpoints', async () => {
+    await startEventAsAdmin(app); // participants may only register while LIVE
     const player = await registerPlayer(app, 'Grunt', 'grunt-admin@x.com');
     const res = await app.inject({ method: 'GET', url: '/api/admin/statistics', headers: { cookie: player } });
     expect(res.statusCode).toBe(403);
@@ -51,6 +52,6 @@ describe('admin authentication', () => {
     expect(JSON.parse(start.body).session.status).toBe('LIVE');
     const close = await app.inject({ method: 'POST', url: '/api/admin/event/close', headers: { cookie } });
     expect(close.statusCode).toBe(200);
-    expect(JSON.parse(close.body).session.status).toBe('COMPLETED');
+    expect(JSON.parse(close.body).stopped.sessionNumber).toBe(1);
   });
 });

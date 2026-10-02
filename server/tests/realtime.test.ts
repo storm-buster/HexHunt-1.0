@@ -19,7 +19,7 @@ beforeAll(async () => {
   wsBase = `ws://127.0.0.1:${addr.port}`;
 });
 afterAll(async () => { await app.close(); });
-beforeEach(async () => { await resetState(); });
+beforeEach(async () => { await resetState(); await startEventAsAdmin(app); });
 afterEach(() => { for (const w of opened.splice(0)) { try { w.close(); } catch { /* */ } } });
 
 interface Client { ws: WebSocket; messages: any[]; waitFor: (type: string, ms?: number) => Promise<any>; }

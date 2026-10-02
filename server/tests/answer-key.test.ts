@@ -6,7 +6,7 @@ import { refreshHiddenActivation } from '../src/events/event.service.js';
 let app: FastifyInstance;
 beforeAll(async () => { app = await makeApp(); });
 afterAll(async () => { await app.close(); });
-beforeEach(async () => { await resetState(); });
+beforeEach(async () => { await resetState(); await startEventAsAdmin(app); });
 
 // Documented answer key (ORGANIZER_ANSWER_KEY.md) — verified against the live
 // argon2 hashes in the seeded DB, in the correct sequential-unlock order.

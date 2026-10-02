@@ -5,7 +5,7 @@ import { makeApp, resetState, registerPlayer, createTeam, startEventAsAdmin } fr
 let app: FastifyInstance;
 beforeAll(async () => { app = await makeApp(); });
 afterAll(async () => { await app.close(); });
-beforeEach(async () => { await resetState(); });
+beforeEach(async () => { await resetState(); await startEventAsAdmin(app); });
 
 const ALL_FLAGS = [
   'DOOM{a3f19c2b}', 'DOOM{7d4e0a91}', 'DOOM{2f8b6c05}',

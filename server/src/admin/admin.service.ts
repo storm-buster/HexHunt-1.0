@@ -4,43 +4,38 @@ import { getAdminLeaderboard } from '../leaderboard/leaderboard.service.js';
 import { HIDDEN_CHALLENGE_ID } from '../hidden/hidden.service.js';
 import { clientCount } from '../realtime/hub.js';
 
-// The session admin views operate on: the LIVE session, else the most recent one.
+// Admin live views operate ONLY on the current LIVE session. Between sessions
+// the live tables are empty, so every count is genuinely zero.
 async function resolveSession() {
-  const live = await getCurrentSession();
-  if (live) return live;
-  const event = await getEvent();
-  if (!event) return null;
-  return prisma.eventSession.findFirst({ where: { eventId: event.id }, orderBy: { sessionNumber: 'desc' } });
+  return getCurrentSession();
 }
 
 export async function adminEventView() {
   await refreshHiddenActivation().catch(() => null);
   const event = await getEvent();
   const live = await getCurrentSession();
-  const latest = event
-    ? await prisma.eventSession.findFirst({ where: { eventId: event.id }, orderBy: { sessionNumber: 'desc' } })
-    : null;
-  const session = live ?? latest;
-  const [teamCount, userCount, sessionCount] = await Promise.all([
+  const [teamCount, userCount, completedCount] = await Promise.all([
     prisma.team.count({ where: { active: true } }),
     prisma.user.count({ where: { role: 'PLAYER' } }),
-    event ? prisma.eventSession.count({ where: { eventId: event.id } }) : Promise.resolve(0),
+    prisma.sessionArchive.count(),
   ]);
   return {
     event: event ? { id: event.id, name: event.name } : null,
-    status: live ? 'LIVE' : session ? 'COMPLETED' : 'NOT_STARTED',
-    session: session
+    // LIVE → a session is running; NO_ACTIVE_SESSION → at least one has completed
+    // (archived) but none is live; NOT_STARTED → nothing has ever run.
+    status: live ? 'LIVE' : completedCount > 0 ? 'NO_ACTIVE_SESSION' : 'NOT_STARTED',
+    session: live
       ? {
-          id: session.id,
-          sessionNumber: session.sessionNumber,
-          status: session.status,
-          startedAt: session.startedAt,
-          completedAt: session.completedAt,
-          hiddenActivationAt: session.hiddenActivationAt, // admin may see the schedule
-          hiddenActivated: session.hiddenActivated,
+          id: live.id,
+          sessionNumber: live.sessionNumber,
+          status: live.status,
+          startedAt: live.startedAt,
+          completedAt: live.completedAt,
+          hiddenActivationAt: live.hiddenActivationAt, // admin may see the schedule
+          hiddenActivated: live.hiddenActivated,
         }
       : null,
-    sessionCount,
+    completedSessions: completedCount,
     serverTime: new Date().toISOString(),
     teamCount,
     userCount,

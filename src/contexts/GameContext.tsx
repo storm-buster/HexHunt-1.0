@@ -28,13 +28,12 @@ interface TeamView {
 }
 
 interface EventView {
-  status: 'NOT_STARTED' | 'LIVE' | 'COMPLETED'
+  status: 'NOT_STARTED' | 'LIVE'
   session: {
     id: string
     sessionNumber: number
-    status: 'LIVE' | 'COMPLETED'
+    status: 'LIVE'
     startedAt: string
-    completedAt: string | null
   } | null
   serverTime: string
   hidden: { activated: boolean; activatedAt: string | null }

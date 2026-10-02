@@ -2,7 +2,7 @@ import { customAlphabet } from 'nanoid';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { Errors } from '../middleware/errors.js';
-import { getEvent } from '../events/event.service.js';
+import { getEvent, requireParticipantSession } from '../events/event.service.js';
 
 export const MAX_TEAM_SIZE = 3;
 
@@ -50,6 +50,8 @@ export async function getTeamForUser(userId: string): Promise<TeamView | null> {
 }
 
 export async function createTeam(userId: string, name: string): Promise<TeamView> {
+  // Teams may only be formed while a session is LIVE.
+  await requireParticipantSession();
   const trimmed = name.trim();
   if (trimmed.length < 2) throw Errors.badRequest('Team name must be at least 2 characters');
 
@@ -86,6 +88,8 @@ export async function createTeam(userId: string, name: string): Promise<TeamView
 }
 
 export async function joinTeam(userId: string, inviteCode: string): Promise<TeamView> {
+  // Teams may only be joined while a session is LIVE.
+  await requireParticipantSession();
   const code = inviteCode.trim().toUpperCase();
   if (!code) throw Errors.badRequest('Invite code is required');
 

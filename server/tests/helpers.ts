@@ -23,6 +23,8 @@ export async function resetState(): Promise<void> {
   await prisma.teamMembership.deleteMany({});
   await prisma.team.deleteMany({});
   await prisma.user.deleteMany({ where: { role: 'PLAYER' } });
+  // Clear historical archives so each test starts from a clean session counter.
+  await prisma.sessionArchive.deleteMany({});
   // Event is a persistent container — nothing to reset on it.
 }
 

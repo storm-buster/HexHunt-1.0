@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { makeApp, resetState, registerPlayer, createTeam } from './helpers.js';
+import { makeApp, resetState, registerPlayer, createTeam, startEventAsAdmin } from './helpers.js';
 
 let app: FastifyInstance;
 beforeAll(async () => { app = await makeApp(); });
 afterAll(async () => { await app.close(); });
-beforeEach(async () => { await resetState(); });
+beforeEach(async () => { await resetState(); await startEventAsAdmin(app); });
 
 async function joinTeam(cookie: string, inviteCode: string) {
   return app.inject({ method: 'POST', url: '/api/teams/join', headers: { cookie }, payload: { inviteCode } });

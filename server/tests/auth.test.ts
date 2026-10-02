@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { makeApp, resetState, sessionCookie, loginAdmin } from './helpers.js';
+import { makeApp, resetState, sessionCookie, loginAdmin, startEventAsAdmin } from './helpers.js';
 
 let app: FastifyInstance;
 beforeAll(async () => { app = await makeApp(); });
 afterAll(async () => { await app.close(); });
-beforeEach(async () => { await resetState(); });
+beforeEach(async () => { await resetState(); await startEventAsAdmin(app); });
 
 describe('auth', () => {
   it('registers a new player and sets a session cookie', async () => {

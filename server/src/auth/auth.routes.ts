@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { config, COOKIE_NAME } from '../config/index.js';
 import { requireAuth } from './guards.js';
 import { getUserById, loginUser, registerUser } from './auth.service.js';
+import { requireParticipantSession, isSessionLive } from '../events/event.service.js';
 import { Errors } from '../middleware/errors.js';
 
 const registerSchema = z.object({
@@ -35,6 +36,8 @@ function setSessionCookie(reply: any, token: string) {
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/register', async (request, reply) => {
+    // Participants may only register while a session is LIVE.
+    await requireParticipantSession();
     const body = registerSchema.parse(request.body);
     const user = await registerUser(body);
     const token = await reply.jwtSign(
@@ -48,6 +51,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/login', async (request, reply) => {
     const body = loginSchema.parse(request.body);
     const { user, payload } = await loginUser(body);
+    // Admin may log in regardless of session state; participants only while LIVE.
+    if (user.role !== 'ADMIN' && !(await isSessionLive())) {
+      throw Errors.sessionNotActive();
+    }
     const token = await reply.jwtSign(payload, { expiresIn: config.jwtExpiresIn });
     setSessionCookie(reply, token);
     return reply.send({ user });

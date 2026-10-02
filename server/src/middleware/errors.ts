@@ -21,6 +21,7 @@ export const Errors = {
   badRequest: (msg = 'Bad request') => new AppError(400, 'BAD_REQUEST', msg),
   tooMany: (msg = 'Too many requests') => new AppError(429, 'RATE_LIMITED', msg),
   eventNotLive: (msg = 'CTF is not live') => new AppError(409, 'EVENT_NOT_LIVE', msg),
+  sessionNotActive: (msg = 'CTF session is not active') => new AppError(409, 'EVENT_NOT_LIVE', msg),
   locked: (msg = 'Challenge is locked') => new AppError(403, 'CHALLENGE_LOCKED', msg),
   alreadySolved: (msg = 'Challenge already solved by your team') =>
     new AppError(409, 'ALREADY_SOLVED', msg),
