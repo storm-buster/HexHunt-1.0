@@ -165,7 +165,7 @@ const darknetChallenges: ChallengeData[] = [
       'Carry the bytes through to plain ASCII to reveal the string.',
     ],
     type: 'forensics',
-    clueContent: { label: 'PIXEL DATA (LSB extracted)', body: 'IMG: whisper.png (100x100)\nLSB BYTE STREAM (hex):\n65 36 33 62 31 64 37 61\nDecode the bytes to ASCII to reveal the token.', format: 'code' },
+    clueContent: undefined, // per-team clue is served by the backend (ChallengeInstance)
     stone: 'space', points: 150, author: 'Strange',
   },
   {
@@ -180,7 +180,7 @@ const darknetChallenges: ChallengeData[] = [
       'Undo the last encoding stage to read the payload.',
     ],
     type: 'decoder',
-    clueContent: { label: 'ENCODED MESSAGE', body: 'CIPHER LAB OUTPUT\nFINAL STAGE (base64): NGM5ZjIwODE=\nDecode to recover the token.', format: 'code' },
+    clueContent: undefined, // per-team clue is served by the backend (ChallengeInstance)
     stone: 'mind', points: 160, author: 'Banner',
   },
   {
@@ -195,7 +195,7 @@ const darknetChallenges: ChallengeData[] = [
       'Carry the binary through to ASCII to read the buried string.',
     ],
     type: 'forensics',
-    clueContent: { label: 'LSB EXTRACTION', body: 'IMG: signal.png\nCHANNEL R, BIT 0 (binary):\n01100010 00110111 01100101 00110101 00110011 00110000 00110100 01100011\nDecode the binary to ASCII to reveal the token.', format: 'code' },
+    clueContent: undefined, // per-team clue is served by the backend (ChallengeInstance)
     stone: 'reality', points: 170, author: 'Romanoff',
   },
   {
@@ -210,7 +210,7 @@ const darknetChallenges: ChallengeData[] = [
       'The body is encoded for transport; reverse that encoding to read it.',
     ],
     type: 'pcap',
-    clueContent: { label: 'PCAP PACKET LIST', body: '#   SRC          DST          PROTO  INFO\n40  10.0.0.1     10.0.0.42    TCP    SYN\n41  10.0.0.1     10.0.0.42    HTTP   GET /key\n42  10.0.0.42    10.0.0.1     HTTP   200 OK  body(base64)=MWY4YTZkMjk=\n43  10.0.0.1     10.0.0.42    TCP    FIN\nInspect the response body to reveal the token.', format: 'code' },
+    clueContent: undefined, // per-team clue is served by the backend (ChallengeInstance)
     stone: 'power', points: 180, author: 'Romanoff',
   },
   {
@@ -225,7 +225,7 @@ const darknetChallenges: ChallengeData[] = [
       'Convert the key\'s bytes to characters to recover it.',
     ],
     type: 'reverse',
-    clueContent: { label: 'DISASSEMBLY (.rodata)', body: '0x00001234: "multiverse_init_v2"\n0x00001248: "android_core_v3"\n0x00001260: KEY (hex) = 33 64 30 63 37 62 39 34\n0x00001280: "MIND_STONE = ACTIVATED"\nDecode the KEY bytes to ASCII to reveal the token.', format: 'code' },
+    clueContent: undefined, // per-team clue is served by the backend (ChallengeInstance)
     stone: 'soul', points: 190, author: 'Banner',
   },
   {
@@ -240,7 +240,7 @@ const darknetChallenges: ChallengeData[] = [
       'Interpret the leaked bytes as ASCII to reconstruct the value.',
     ],
     type: 'pwn',
-    clueContent: { label: 'VULNERABLE PROGRAM', body: '#include <stdio.h>\nint main(int argc, char *argv[]) {\n  printf(argv[1]);  // format-string vuln\n  return 0;\n}\nLEAKED MEMORY (hex): 38 65 32 31 34 35 61 66\nInterpret the leaked bytes as ASCII to reveal the token.', format: 'terminal' },
+    clueContent: undefined, // per-team clue is served by the backend (ChallengeInstance)
     stone: 'time', points: 200, author: 'Romanoff',
   },
 ]

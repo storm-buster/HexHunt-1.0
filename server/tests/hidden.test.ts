@@ -5,6 +5,7 @@ import {
   userIdByEmail, prisma,
 } from './helpers.js';
 import { refreshHiddenActivation } from '../src/events/event.service.js';
+import { instanceAnswer } from './instance-helpers.js';
 
 const HIDDEN_FLAG = 'DOOM{d00d5f3a}';
 
@@ -132,7 +133,9 @@ describe('hidden level — T+30 activation & per-team member selection', () => {
     const denied = await hiddenSubmit(other.cookie, HIDDEN_FLAG);
     expect(denied.statusCode).toBe(403);
 
-    const ok = await hiddenSubmit(selected.cookie, HIDDEN_FLAG);
+    await hiddenState(selected.cookie); // selected member views → instance created
+    const answer = await instanceAnswer(await liveSessionId(), teamId, 'hidden-01');
+    const ok = await hiddenSubmit(selected.cookie, answer);
     expect(ok.statusCode).toBe(200);
     const body = JSON.parse(ok.body);
     expect(body.result).toBe('correct');

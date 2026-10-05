@@ -5,6 +5,8 @@ import type { PortalType } from '../data/challenges'
 import PageTransition from '../components/PageTransition'
 import BattleworldBg from '../components/BattleworldBg'
 import CommandButton from '../components/CommandButton'
+import Watermark from '../components/Watermark'
+import { useAntiCheat } from '../anticheat/useAntiCheat'
 
 // ── Portal theme class mapping ──────────────────────────────
 const PORTAL_THEME: Record<string, string> = {
@@ -61,6 +63,7 @@ export default function Portal() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const { getChallenge, checkPortal } = useGame()
+  useAntiCheat()
 
   const [puzzleInput, setPuzzleInput] = useState('')
   const [puzzleError, setPuzzleError] = useState('')
@@ -258,6 +261,7 @@ export default function Portal() {
   return (
     <PageTransition>
       <BattleworldBg variant="portal" />
+      <Watermark />
       <style>{`
         .portal-env {
           position: relative;

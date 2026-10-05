@@ -7,6 +7,8 @@ import { assertChallengeAccessible } from '../challenges/challenge.service.js';
 import { computeAwardedPoints, elapsedSecondsSince } from '../scoring/scoring.service.js';
 import { broadcast, broadcastToTeam } from '../realtime/hub.js';
 import { getTeamScore } from '../leaderboard/leaderboard.service.js';
+import { validateInstanceAnswer, isFinalUnlocked } from '../challenges/challenge-instance.service.js';
+import { recordTelemetry } from '../anticheat/anticheat.service.js';
 
 export type SubmitOutcome =
   | { result: 'CORRECT'; awardedPoints: number; challengeId: string }
@@ -40,7 +42,21 @@ export async function processSubmission(input: SubmitInput): Promise<SubmitOutco
     throw Errors.alreadySolved();
   }
 
-  const correct = await verifySecret(challenge.flagHash, input.flag);
+  // Multi-step gate: the final answer is only accepted once the intermediate
+  // step has been verified server-side. A direct final submission that skips
+  // the step machine is rejected (and recorded as a behavioral signal).
+  if (!(await isFinalUnlocked(sessionId, input.teamId, input.challengeId))) {
+    await recordSubmission(sessionId, input, 'REJECTED', 0);
+    void recordTelemetry(input.userId, [{ type: 'STEP_SKIPPED_ATTEMPT' }]).catch(() => {});
+    throw Errors.locked('Complete the intermediate step first');
+  }
+
+  // Server-authoritative validation. Prefer this team's per-session instance
+  // (so Team A's answer never solves Team B); fall back to the legacy global
+  // flag hash only for non-instanced challenges.
+  const instanceVerdict = await validateInstanceAnswer(sessionId, input.teamId, input.challengeId, input.flag);
+  const correct =
+    instanceVerdict !== null ? instanceVerdict : await verifySecret(challenge.flagHash, input.flag);
   if (!correct) {
     await recordSubmission(sessionId, input, 'INCORRECT', 0);
     return { result: 'INCORRECT' };

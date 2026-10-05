@@ -5,6 +5,7 @@ import { Errors } from '../middleware/errors.js';
 import { verifySecret } from '../auth/password.js';
 import { requireLiveSession, refreshHiddenActivation } from '../events/event.service.js';
 import { broadcast } from '../realtime/hub.js';
+import { getOrCreateInstance, instancePublicState, validateInstanceAnswer } from '../challenges/challenge-instance.service.js';
 
 export const HIDDEN_CHALLENGE_ID = 'hidden-01';
 
@@ -48,6 +49,10 @@ export async function getHiddenState(userId: string, teamId: string): Promise<Hi
   const reward = hidden?.hiddenReward ?? config.hidden.reward;
   const penalty = hidden?.hiddenPenalty ?? config.hidden.penalty;
 
+  // Per-team instanced beacon (unique base64 token per session+team).
+  const inst = await getOrCreateInstance(session.id, teamId, HIDDEN_CHALLENGE_ID);
+  const clueContent = inst ? instancePublicState(inst).clueContent : (hidden?.clueContent ?? null);
+
   return {
     activated: true,
     available: true,
@@ -55,7 +60,7 @@ export async function getHiddenState(userId: string, teamId: string): Promise<Hi
       ? {
           id: hidden.id, title: hidden.title, category: hidden.category,
           description: hidden.description, narrative: hidden.narrative,
-          clueContent: hidden.clueContent ?? null, hints: (hidden.hints as string[]) ?? [],
+          clueContent, hints: (hidden.hints as string[]) ?? [],
           reward, penalty,
         }
       : null,
@@ -92,7 +97,10 @@ export async function submitHidden(userId: string, teamId: string, answer: strin
   const reward = hidden.hiddenReward ?? config.hidden.reward;
   const penalty = hidden.hiddenPenalty ?? config.hidden.penalty;
 
-  const correct = await verifySecret(hidden.flagHash, answer);
+  const correct = await (async () => {
+    const verdict = await validateInstanceAnswer(sessionId, teamId, HIDDEN_CHALLENGE_ID, answer);
+    return verdict !== null ? verdict : await verifySecret(hidden.flagHash, answer);
+  })();
   const scoreDelta = correct ? reward : -penalty;
 
   try {

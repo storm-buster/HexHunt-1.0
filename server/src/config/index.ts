@@ -126,6 +126,25 @@ export const config = {
     windowSeconds: int('SUBMIT_RATE_WINDOW_SECONDS', 60),
   },
 
+  // Anti-cheat telemetry + suspicious-solve heuristics (all server-side).
+  antiCheat: {
+    // Behavioral signal types the telemetry endpoint will accept. Anything else
+    // is ignored. These are coarse interaction signals — never content.
+    allowedTypes: [
+      'COPY_ATTEMPT', 'CUT_ATTEMPT', 'PASTE_ATTEMPT', 'DROP_TEXT_ATTEMPT',
+      'CONTEXT_MENU_ATTEMPT', 'PRINT_ATTEMPT', 'DEVTOOLS_SHORTCUT_ATTEMPT',
+      'VISIBILITY_HIDDEN', 'WINDOW_BLUR', 'WINDOW_FOCUS',
+      'STEP_COMPLETED', 'STEP_SKIPPED_ATTEMPT', 'INVALID_STEP_INPUT',
+    ] as string[],
+    // Per-request guards against noisy/abusive clients.
+    maxTypesPerRequest: int('ANTICHEAT_MAX_TYPES_PER_REQUEST', 12),
+    maxIncrementPerType: int('ANTICHEAT_MAX_INCREMENT_PER_TYPE', 50),
+    // Suspicious-solve heuristics (triage signals only — never auto-penalize).
+    fastSolveSeconds: int('ANTICHEAT_FAST_SOLVE_SECONDS', 30),
+    rapidSolveWindowSeconds: int('ANTICHEAT_RAPID_SOLVE_WINDOW_SECONDS', 60),
+    rapidSolveCount: int('ANTICHEAT_RAPID_SOLVE_COUNT', 3),
+  },
+
   get allowedOrigins(): string[] {
     return Array.from(new Set([...this.playerOrigin, ...this.adminOrigin]));
   },

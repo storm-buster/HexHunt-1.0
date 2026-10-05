@@ -7,6 +7,8 @@ import StoneCounter from '../components/StoneCounter'
 import PageTransition from '../components/PageTransition'
 import BattleworldBg from '../components/BattleworldBg'
 import CommandButton from '../components/CommandButton'
+import Watermark from '../components/Watermark'
+import { useAntiCheat } from '../anticheat/useAntiCheat'
 
 const STONE_INFO = [
   { id: 'space' as const,   color: 'var(--stone-space, #007aff)',   label: 'SPACE' },
@@ -20,6 +22,7 @@ const STONE_INFO = [
 export default function FinalBoss() {
   const { state } = useGame()
   const navigate = useNavigate()
+  useAntiCheat()
   const { stones } = state
 
   // Final-boss completion + reveal are authoritative on the server; the flag is
@@ -52,6 +55,7 @@ export default function FinalBoss() {
   return (
     <PageTransition>
       <BattleworldBg variant="boss" />
+      <Watermark />
       <style>{`
         @keyframes spin {
           from { transform: rotate(0deg); }

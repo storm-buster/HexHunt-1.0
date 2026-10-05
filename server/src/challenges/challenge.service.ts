@@ -1,6 +1,7 @@
 import type { Challenge } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { Errors } from '../middleware/errors.js';
+import { getOrCreateInstance, isInstanced, instancePublicState, isMultiStep, currentStepClue } from './challenge-instance.service.js';
 
 // Player-safe challenge shape. NEVER includes flagHash / portalAnswerHash /
 // any answer value.
@@ -25,6 +26,11 @@ export interface PlayerChallenge {
   universeOrder: number;
   locked: boolean;
   solved: boolean;
+  // Multi-step challenges only: current phase info (final-phase material is
+  // never present while awaitingIntermediate is true).
+  step?: number;
+  totalSteps?: number;
+  awaitingIntermediate?: boolean;
 }
 
 export function toPlayerChallenge(
@@ -110,7 +116,28 @@ export async function getPlayerChallenge(sessionId: string, teamId: string, id: 
   const solved = await getTeamSolvedIds(sessionId, teamId);
   const unlock = computeUnlockMap(challenges, solved);
   if (!unlock.get(id)) throw Errors.locked();
-  return toPlayerChallenge(challenge, { locked: false, solved: solved.has(id) });
+  const player = toPlayerChallenge(challenge, { locked: false, solved: solved.has(id) });
+
+  // Per-team instanced clue: the authoritative clue is generated server-side and
+  // is unique to this session+team. The static Challenge.clueContent is only a
+  // template; it is never the runtime clue for an instanced challenge.
+  if (isInstanced(id)) {
+    if (isMultiStep(id)) {
+      // Multi-step: return ONLY the current phase's material (final-phase
+      // material is withheld until the intermediate is verified).
+      const view = await currentStepClue(sessionId, teamId, id);
+      if (view) {
+        player.clueContent = view.clueContent as unknown as PlayerChallenge['clueContent'];
+        player.step = view.step;
+        player.totalSteps = view.totalSteps;
+        player.awaitingIntermediate = view.awaitingIntermediate;
+      }
+    } else {
+      const inst = await getOrCreateInstance(sessionId, teamId, id);
+      if (inst) player.clueContent = instancePublicState(inst).clueContent as unknown as PlayerChallenge['clueContent'];
+    }
+  }
+  return player;
 }
 
 export async function assertChallengeAccessible(

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useGame } from '../contexts/GameContext'
+import { api } from '../api/client'
 import FlagInput from '../components/FlagInput'
 import HintsPanel from '../components/HintsPanel'
 import DecoderTool from '../components/DecoderTool'
@@ -12,6 +13,8 @@ import GlitchOverlay from '../components/GlitchOverlay'
 import PageTransition from '../components/PageTransition'
 import BattleworldBg from '../components/BattleworldBg'
 import CommandButton from '../components/CommandButton'
+import Watermark from '../components/Watermark'
+import { useAntiCheat } from '../anticheat/useAntiCheat'
 
 // Mock pixel data per challenge
 const PIXEL_DATA: Record<string, { pos: string; rgb: [number, number, number]; note?: string }[]> = {
@@ -84,6 +87,54 @@ export default function Challenge() {
 
   const telemetry = useMemo(() => challenge ? generateTelemetry(challenge.id) : null, [challenge?.id])
 
+  // Authoritative per-team clue comes from the server (per ChallengeInstance),
+  // NOT the bundled template. Multi-step challenges return only the CURRENT
+  // step's material (final-phase material is withheld until the intermediate is
+  // verified server-side).
+  const [serverClue, setServerClue] = useState<{ label: string; body: string; format?: string } | null>(null)
+  const [stepInfo, setStepInfo] = useState<{ step?: number; totalSteps?: number; awaitingIntermediate?: boolean }>({})
+  const [stepInput, setStepInput] = useState('')
+  const [stepError, setStepError] = useState('')
+  const [stepBusy, setStepBusy] = useState(false)
+  const challengeKey = challenge?.id
+  const unlocked = challenge ? isChallengeUnlocked(challenge.id) : false
+
+  const loadServerChallenge = async (id: string) => {
+    try {
+      const r: any = await api.challenge(id)
+      setServerClue(r?.challenge?.clueContent ?? null)
+      setStepInfo({ step: r?.challenge?.step, totalSteps: r?.challenge?.totalSteps, awaitingIntermediate: r?.challenge?.awaitingIntermediate })
+    } catch { /* locked/not-live — leave null */ }
+  }
+
+  useEffect(() => {
+    if (!challengeKey || state.loading || !unlocked) return
+    void loadServerChallenge(challengeKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [challengeKey, state.loading, unlocked])
+
+  const verifyIntermediate = async () => {
+    if (!challengeKey || !stepInput.trim() || stepBusy) return
+    setStepBusy(true); setStepError('')
+    try {
+      const res = await api.challengeStep(challengeKey, stepInput.trim())
+      if (res.step?.ok) {
+        setStepInput('')
+        await loadServerChallenge(challengeKey) // reveals the final-phase material
+      } else {
+        setStepError('Incorrect intermediate value. Re-check your work.')
+      }
+    } catch {
+      setStepError('Verification failed.')
+    } finally {
+      setStepBusy(false)
+    }
+  }
+
+  // Copy-protection + telemetry for this gameplay page (called unconditionally
+  // before any early return to keep hook order stable).
+  useAntiCheat()
+
   if (!challenge || !telemetry) return null
 
   const color = UNIVERSE_COLOR[challenge.universe]
@@ -126,6 +177,7 @@ export default function Challenge() {
   return (
     <PageTransition>
       <BattleworldBg variant={bgVariant} />
+      <Watermark />
       <main
         className={`challenge ${wrong ? 'challenge--shake' : ''}`}
         style={{ ['--ch-color' as any]: color } as any}
@@ -184,11 +236,11 @@ export default function Challenge() {
 
                 <NarrativePanel label="BRIEFING">{challenge.description}</NarrativePanel>
 
-                {challenge.clueContent && (
+                {serverClue && (
                   <CluePanel
-                    label={challenge.clueContent.label}
-                    body={challenge.clueContent.body}
-                    format={challenge.clueContent.format}
+                    label={serverClue.label}
+                    body={serverClue.body}
+                    format={serverClue.format as any}
                     color={color}
                   />
                 )}
@@ -283,16 +335,52 @@ export default function Challenge() {
 
             <div className="terminal-divider">
               <span>──</span>
-              <span>EXECUTE FLAG SUBMISSION</span>
+              <span>{stepInfo.totalSteps ? `OBJECTIVE — STEP ${stepInfo.step} OF ${stepInfo.totalSteps}` : 'EXECUTE FLAG SUBMISSION'}</span>
               <span className="terminal-divider-line"></span>
             </div>
 
-            <FlagInput
-              onSubmit={(value) => submitFlag(challenge.id, value)}
-              onCorrect={handleCorrect}
-              onWrong={handleWrong}
-              color={color}
-            />
+            {stepInfo.awaitingIntermediate ? (
+              <div className="step-verify" style={{ width: '100%', maxWidth: 600 }}>
+                <div className={`flag-status flag-status--${stepError ? 'error' : 'idle'}`} style={{ marginBottom: '0.75rem' }}>
+                  <span className="flag-status__dot" />
+                  {stepError || 'SUBMIT INTERMEDIATE VALUE TO UNLOCK THE NEXT STEP'}
+                </div>
+                <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden' }}>
+                  <input
+                    type="text"
+                    value={stepInput}
+                    onChange={(e) => setStepInput(e.target.value)}
+                    onPaste={(e) => e.preventDefault()}
+                    onDrop={(e) => e.preventDefault()}
+                    onDragOver={(e) => e.preventDefault()}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="intermediate value"
+                    aria-label="intermediate value"
+                    disabled={stepBusy}
+                    style={{ flex: 1, padding: '12px 16px', fontFamily: 'var(--mono-font, monospace)', background: 'var(--s1,#111)', color: 'var(--text-primary,#fff)', border: `1px solid ${color}`, borderRight: 'none', borderRadius: '4px 0 0 4px', outline: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={verifyIntermediate}
+                    disabled={stepBusy}
+                    style={{ padding: '0 24px', background: 'var(--s2,#222)', color: 'var(--text-primary,#fff)', border: `1px solid ${color}`, borderRadius: '0 4px 4px 0', fontFamily: 'var(--mono-font, monospace)', fontWeight: 'bold', cursor: 'pointer' }}
+                  >
+                    {stepBusy ? '…' : 'VERIFY'}
+                  </button>
+                </div>
+                <p className="flag-input__note" style={{ margin: '0.5rem 0 0', fontFamily: 'var(--mono-font, monospace)', fontSize: '0.68rem', color: 'var(--text-muted,#888)' }}>
+                  Type the value manually — paste is disabled.
+                </p>
+              </div>
+            ) : (
+              <FlagInput
+                onSubmit={(value) => submitFlag(challenge.id, value)}
+                onCorrect={handleCorrect}
+                onWrong={handleWrong}
+                color={color}
+              />
+            )}
           </div>
           
           <div className="terminal-footer">

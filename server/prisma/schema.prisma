@@ -152,10 +152,87 @@ model EventSession {
   submissions       Submission[]
   hiddenResults     HiddenLevelResult[]
   hiddenAssignments HiddenLevelAssignment[]
+  antiCheatEvents   AntiCheatEvent[]
+  challengeInstances ChallengeInstance[]
+  challengeSteps    ChallengeStepProgress[]
 
   @@unique([eventId, sessionNumber])
   @@index([eventId])
   @@index([status])
+}
+
+// ── ChallengeInstance (per-session, per-team challenge state) ──
+// One generated instance per (session, team, challenge). `publicState` holds
+// ONLY non-secret, player-visible material (the per-team clue body + artifact
+// records); the correct answer is derivable from it by solving, exactly as the
+// puzzle intends, but is per-team so a screenshot/answer from one team does not
+// solve another. `answerHash` (argon2id of the per-instance answer) is
+// SERVER-ONLY and never serialized to players. The generation seed/token is
+// never persisted. FK to EventSession → wiped automatically on STOP/reset.
+model ChallengeInstance {
+  id          String   @id @default(cuid())
+  sessionId   String
+  teamId      String
+  challengeId String
+  publicState Json
+  answerHash  String
+  createdAt   DateTime @default(now())
+
+  session EventSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, teamId, challengeId])
+  @@index([sessionId])
+  @@index([sessionId, teamId])
+  @@index([challengeId])
+}
+
+// ── ChallengeStepProgress (multi-step state machine, server-only) ──
+// For multi-step challenges, tracks a team's progression through server-
+// validated phases. `stage` 1 = awaiting the intermediate value; 2 = intermediate
+// verified, final answer unlockable. `intermediateHash` is the argon2id hash of
+// the step-1 value (server-only). `stepMaterial` holds the clue bodies for each
+// phase; the FINAL-phase material is only ever returned to the player AFTER the
+// intermediate is verified, so a step-1 screenshot cannot contain the final.
+// FK to EventSession → wiped on STOP/reset. Progress survives refresh/reconnect.
+model ChallengeStepProgress {
+  id               String   @id @default(cuid())
+  sessionId        String
+  teamId           String
+  challengeId      String
+  stage            Int      @default(1)
+  totalSteps       Int      @default(2)
+  intermediateHash String
+  stepMaterial     Json
+  createdAt        DateTime @default(now())
+
+  session EventSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, teamId, challengeId])
+  @@index([sessionId])
+  @@index([sessionId, teamId])
+}
+
+// ── Anti-cheat telemetry (coarse, session-scoped counters) ──
+// Behavioral signals only (copy/cut/paste/context-menu/visibility/blur). Stores
+// COUNTS per (session, team, user, type) — never clipboard contents, answers,
+// flags, or any secret. FK to EventSession → wiped automatically when the
+// session is deleted on STOP/reset/cleanup. teamId/userId are plain columns
+// (the owning session is always deleted first), indexed for admin aggregation.
+model AntiCheatEvent {
+  id        String   @id @default(cuid())
+  sessionId String
+  teamId    String
+  userId    String
+  type      String
+  count     Int      @default(0)
+  lastAt    DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  session EventSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, teamId, userId, type])
+  @@index([sessionId])
+  @@index([sessionId, teamId])
 }
 
 // ── Challenge (persistent definitions) ──────────────────────

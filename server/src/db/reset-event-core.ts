@@ -49,6 +49,9 @@ export async function resetEventLifecycle(prisma: PrismaClient): Promise<ResetEv
   await prisma.$transaction(async (tx) => {
     if (live) await tx.eventSession.delete({ where: { id: live.id } }); // cascades gameplay
     // Defensive: clear any orphan gameplay rows not tied to the live session.
+    await tx.challengeStepProgress.deleteMany({});
+    await tx.challengeInstance.deleteMany({});
+    await tx.antiCheatEvent.deleteMany({});
     await tx.hiddenLevelAssignment.deleteMany({});
     await tx.hiddenLevelResult.deleteMany({});
     await tx.submission.deleteMany({});

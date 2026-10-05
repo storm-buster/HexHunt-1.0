@@ -18,6 +18,9 @@ export async function resetState(): Promise<void> {
   await prisma.solve.deleteMany({});
   await prisma.hiddenLevelResult.deleteMany({});
   await prisma.hiddenLevelAssignment.deleteMany({});
+  await prisma.antiCheatEvent.deleteMany({});
+  await prisma.challengeInstance.deleteMany({});
+  await prisma.challengeStepProgress.deleteMany({});
   // Removing sessions clears all per-session gameplay (also via FK cascade).
   await prisma.eventSession.deleteMany({});
   await prisma.teamMembership.deleteMany({});

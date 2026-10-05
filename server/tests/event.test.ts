@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import {
   makeApp, resetState, registerPlayer, createTeam, loginAdmin, startEventAsAdmin, prisma,
 } from './helpers.js';
+import { solveChallenge } from './instance-helpers.js';
 
 let app: FastifyInstance;
 beforeAll(async () => { app = await makeApp(); });
@@ -40,7 +41,7 @@ describe('session lifecycle (independent sessions with full reset)', () => {
     await startEventAsAdmin(app);
     const p = await registerPlayer(app, 'P', 'ev2@x.com');
     await createTeam(app, p, 'Team Ev2');
-    const res = await submit(p, 'wv-01', WV01_FLAG);
+    const res = await solveChallenge(app, p, 'wv-01');
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body).result).toBe('correct');
   });
@@ -49,7 +50,7 @@ describe('session lifecycle (independent sessions with full reset)', () => {
     await startEventAsAdmin(app);
     const p = await registerPlayer(app, 'P', 'ev3@x.com');
     await createTeam(app, p, 'Team Ev3');
-    await submit(p, 'wv-01', WV01_FLAG);
+    await solveChallenge(app, p, 'wv-01');
 
     const admin = await loginAdmin(app);
     const closed = await adminStop(admin);

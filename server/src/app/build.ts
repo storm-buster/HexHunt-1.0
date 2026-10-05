@@ -19,6 +19,7 @@ import { hiddenRoutes } from '../hidden/hidden.routes.js';
 import { adminRoutes } from '../admin/admin.routes.js';
 import { realtimeRoutes } from '../realtime/realtime.routes.js';
 import { artifactRoutes } from '../challenges/artifacts.routes.js';
+import { telemetryRoutes } from '../anticheat/telemetry.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -82,6 +83,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await api.register(submissionRoutes);
       await api.register(leaderboardRoutes);
       await api.register(hiddenRoutes);
+      await api.register(telemetryRoutes);
     },
     { prefix: '/api' },
   );

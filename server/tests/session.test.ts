@@ -5,6 +5,7 @@ import {
   makeApp, resetState, registerPlayer, createTeam, loginAdmin,
   startEventAsAdmin, stopEventAsAdmin, prisma,
 } from './helpers.js';
+import { solveChallenge } from './instance-helpers.js';
 
 const WV01 = 'DOOM{a3f19c2b}';
 const WV02 = 'DOOM{7d4e0a91}';
@@ -15,8 +16,10 @@ beforeAll(async () => { app = await makeApp(); });
 afterAll(async () => { await app.close(); });
 beforeEach(async () => { await resetState(); });
 
-function submit(cookie: string, challengeId: string, flag: string) {
-  return app.inject({ method: 'POST', url: '/api/submissions', headers: { cookie }, payload: { challengeId, flag } });
+// Correct submissions resolve the per-team instance answer (ignores any passed
+// flag). Used only for intended successful solves of unlocked challenges.
+function submit(cookie: string, challengeId: string, _flag?: string) {
+  return solveChallenge(app, cookie, challengeId);
 }
 async function adminGet(url: string, cookie: string) {
   return app.inject({ method: 'GET', url, headers: { cookie } });

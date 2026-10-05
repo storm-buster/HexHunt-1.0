@@ -1,5 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { findArtifact, type ArtifactDef } from './challenge-data.js';
+import { type ArtifactDef } from './challenge-data.js';
+import { requireAuth } from '../auth/guards.js';
+import { prisma } from '../db/prisma.js';
+import { getCurrentSession } from '../events/event.service.js';
+import { getInstanceArtifact } from './challenge-instance.service.js';
 
 function esc(s: string): string {
   return s
@@ -45,17 +49,42 @@ function renderArtifact(art: ArtifactDef): string {
 </body></html>`;
 }
 
-// Public (unauthenticated) challenge artifacts. These are puzzle material, not
-// secrets: the flag is never present verbatim and the correct record must be
-// deduced from the challenge clue. The unguessable :artifactId gates access.
+// Challenge artifacts (webverse/osint investigation material). These are now
+// AUTHORIZED, not public: a request must carry a valid session cookie, belong to
+// a team, and run during a LIVE session. The flag is never present verbatim; the
+// correct record must still be deduced from the challenge clue. This blocks
+// unauthenticated external tooling (e.g. an AI with browsing) from fetching the
+// record data straight from a screenshot of the clue URL.
 export async function artifactRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/artifacts/:challengeId/:artifactId', async (request, reply) => {
-    const { challengeId, artifactId } = request.params as { challengeId: string; artifactId: string };
-    const art = findArtifact(challengeId, artifactId);
-    if (!art) {
-      reply.status(404).type('text/html').send('<!doctype html><title>404</title><h1>404 — no such artifact</h1>');
-      return;
-    }
-    reply.type('text/html').send(renderArtifact(art));
-  });
+  app.get(
+    '/artifacts/:challengeId/:artifactId',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { challengeId, artifactId } = request.params as { challengeId: string; artifactId: string };
+
+      // Must be during a LIVE session…
+      const session = await getCurrentSession();
+      if (!session) {
+        reply.status(409).type('text/html').send('<!doctype html><title>unavailable</title><h1>Artifact unavailable — no live session.</h1>');
+        return;
+      }
+      // …and the requester must belong to a team (derived server-side; never
+      // trusted from the client).
+      const membership = await prisma.teamMembership.findUnique({ where: { userId: request.user!.sub } });
+      if (!membership) {
+        reply.status(403).type('text/html').send('<!doctype html><title>forbidden</title><h1>403 — join a team to access artifacts.</h1>');
+        return;
+      }
+
+      // Serve ONLY this team's own per-instance artifact. The artifactId must
+      // match the requester's instance for this challenge, so another team's
+      // artifactId (or an enumerated/guessed id) resolves to nothing.
+      const art = await getInstanceArtifact(session.id, membership.teamId, challengeId, artifactId);
+      if (!art) {
+        reply.status(404).type('text/html').send('<!doctype html><title>404</title><h1>404 — no such artifact</h1>');
+        return;
+      }
+      reply.type('text/html').send(renderArtifact(art));
+    },
+  );
 }

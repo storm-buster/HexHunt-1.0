@@ -97,6 +97,9 @@ export async function cleanupLegacyPreArchiveState(prisma: PrismaClient): Promis
     // Defensive sweep of any remaining pre-archive gameplay/participants. There
     // is no LIVE session (guarded above) and SessionArchive is a separate,
     // untouched table, so this cannot affect a running session or history.
+    await tx.challengeStepProgress.deleteMany({});
+    await tx.challengeInstance.deleteMany({});
+    await tx.antiCheatEvent.deleteMany({});
     await tx.hiddenLevelAssignment.deleteMany({});
     await tx.hiddenLevelResult.deleteMany({});
     await tx.submission.deleteMany({});

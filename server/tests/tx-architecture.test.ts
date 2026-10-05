@@ -5,6 +5,7 @@ import {
 } from './helpers.js';
 import { prisma as pooledClient, txPrisma } from '../src/db/prisma.js';
 import { config } from '../src/config/index.js';
+import { solveChallenge } from './instance-helpers.js';
 
 const WV01 = 'DOOM{a3f19c2b}';
 
@@ -38,7 +39,7 @@ describe('transaction-client architecture (pooled vs direct)', () => {
     const mate = await registerPlayer(app, 'TxMate', 'tx-mate@x.com');
     const joined = await app.inject({ method: 'POST', url: '/api/teams/join', headers: { cookie: mate }, payload: { inviteCode: code } });
     expect(joined.statusCode).toBe(200);
-    const solve = await app.inject({ method: 'POST', url: '/api/submissions', headers: { cookie: owner }, payload: { challengeId: 'wv-01', flag: WV01 } });
+    const solve = await solveChallenge(app, owner, 'wv-01');
     expect(solve.statusCode).toBe(200);
     expect(await prisma.solve.count()).toBe(1);
   });
@@ -47,7 +48,7 @@ describe('transaction-client architecture (pooled vs direct)', () => {
     await startEventAsAdmin(app);
     const p = await registerPlayer(app, 'Atom', 'atom@x.com');
     await createTeam(app, p, 'Atoms');
-    await app.inject({ method: 'POST', url: '/api/submissions', headers: { cookie: p }, payload: { challengeId: 'wv-01', flag: WV01 } });
+    await solveChallenge(app, p, 'wv-01');
     await stopEventAsAdmin(app);
     expect(await prisma.sessionArchive.count()).toBe(1);
     expect(await prisma.user.count({ where: { role: 'PLAYER' } })).toBe(0);

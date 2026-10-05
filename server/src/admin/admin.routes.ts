@@ -12,6 +12,7 @@ import {
   adminStatistics,
 } from './admin.service.js';
 import { listArchives, getArchiveDetail, buildArchiveExport } from './archive.service.js';
+import { getAntiCheatSummary } from '../anticheat/anticheat.service.js';
 import { Errors } from '../middleware/errors.js';
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
@@ -44,6 +45,9 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.get('/challenges', async (_req, reply) => reply.send({ challenges: await adminChallengeMonitor() }));
   app.get('/hidden-level', async (_req, reply) => reply.send({ hidden: await adminHiddenLevel() }));
   app.get('/statistics', async (_req, reply) => reply.send({ statistics: await adminStatistics() }));
+
+  // Anti-cheat triage summary for the CURRENT live session (admin-only).
+  app.get('/anti-cheat', async (_req, reply) => reply.send({ antiCheat: await getAntiCheatSummary() }));
 
   // ── Session history + export (admin-only, from immutable archives) ──
   app.get('/sessions', async (_req, reply) => reply.send({ sessions: await listArchives() }));

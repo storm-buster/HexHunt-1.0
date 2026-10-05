@@ -5,6 +5,7 @@ import {
 } from './helpers.js';
 import { resetEventLifecycle } from '../src/db/reset-event-core.js';
 import { startSession } from '../src/events/event.service.js';
+import { solveChallenge } from './instance-helpers.js';
 
 let app: FastifyInstance;
 beforeAll(async () => { app = await makeApp(); });
@@ -18,7 +19,7 @@ describe('reset:event (operator LIVE-state wipe, never archives)', () => {
     await startEventAsAdmin(app);
     const p = await registerPlayer(app, 'Keeper', 'keep@x.com');
     await createTeam(app, p, 'Keepers');
-    await app.inject({ method: 'POST', url: '/api/submissions', headers: { cookie: p }, payload: { challengeId: 'wv-01', flag: WV01 } });
+    await solveChallenge(app, p, 'wv-01');
     expect(await prisma.solve.count()).toBe(1);
 
     const res = await resetEventLifecycle(prisma);
@@ -43,7 +44,7 @@ describe('reset:event (operator LIVE-state wipe, never archives)', () => {
     await startEventAsAdmin(app);
     const p = await registerPlayer(app, 'Hist', 'hist@x.com');
     await createTeam(app, p, 'Historians');
-    await app.inject({ method: 'POST', url: '/api/submissions', headers: { cookie: p }, payload: { challengeId: 'wv-01', flag: WV01 } });
+    await solveChallenge(app, p, 'wv-01');
     await stopEventAsAdmin(app);
     expect(await prisma.sessionArchive.count()).toBe(1);
 

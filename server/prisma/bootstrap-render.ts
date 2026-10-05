@@ -98,6 +98,9 @@ async function main(): Promise<void> {
       ['Submission', () => prisma.submission.count()],
       ['HiddenLevelAssignment', () => prisma.hiddenLevelAssignment.count()],
       ['HiddenLevelResult', () => prisma.hiddenLevelResult.count()],
+      ['AntiCheatEvent', () => prisma.antiCheatEvent.count()],
+      ['ChallengeInstance', () => prisma.challengeInstance.count()],
+      ['ChallengeStepProgress', () => prisma.challengeStepProgress.count()],
     ];
     let allTablesOk = true;
     for (const [name, count] of tables) {

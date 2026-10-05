@@ -50,6 +50,10 @@ export const api = {
   // Challenges
   challenges: () => request<{ challenges: any[] }>('/api/challenges'),
   challenge: (id: string) => request<{ challenge: any }>(`/api/challenges/${id}`),
+  challengeStep: (id: string, input: string) =>
+    request<{ step: { ok: boolean; step: number; totalSteps: number; awaitingIntermediate: boolean; clueContent: any } | null }>(
+      `/api/challenges/${id}/step`, { method: 'POST', body: JSON.stringify({ input }) },
+    ),
   progress: () => request<{ progress: any }>('/api/progress'),
   portalCheck: (id: string, answer: string) =>
     request<{ correct: boolean }>(`/api/challenges/${id}/portal-check`, { method: 'POST', body: JSON.stringify({ answer }) }),
@@ -66,4 +70,9 @@ export const api = {
   hiddenSubmit: (answer: string) =>
     request<{ result: string; scoreDelta: number }>('/api/hidden-level/submit', { method: 'POST', body: JSON.stringify({ answer }) }),
   finalBoss: () => request<{ finalBoss: any }>('/api/final-boss'),
+
+  // Anti-cheat telemetry — coarse behavioral signals only (no content). The
+  // server derives team/session from the session cookie; no team is sent.
+  telemetry: (events: { type: string; count?: number }[]) =>
+    request<{ ok: boolean; recorded: number }>('/api/telemetry', { method: 'POST', body: JSON.stringify({ events }) }),
 }

@@ -5,6 +5,7 @@ import {
 } from './helpers.js';
 import { startSession } from '../src/events/event.service.js';
 import { cleanupLegacyPreArchiveState } from '../src/db/session-bootstrap-cleanup-core.js';
+import { solveChallenge } from './instance-helpers.js';
 
 const WV01 = 'DOOM{a3f19c2b}';
 
@@ -90,7 +91,7 @@ describe('legacy cleanup core — cleanupLegacyPreArchiveState', () => {
     await startEventAsAdmin(app);
     const p = await registerPlayer(app, 'Legacy', 'legacy@x.com');
     await createTeam(app, p, 'Legacy Crew');
-    await app.inject({ method: 'POST', url: '/api/submissions', headers: { cookie: p }, payload: { challengeId: 'wv-01', flag: WV01 } });
+    await solveChallenge(app, p, 'wv-01');
     // Archive a real session so we can prove archives are preserved.
     await stopEventAsAdmin(app);
     expect(await prisma.sessionArchive.count()).toBe(1);

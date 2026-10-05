@@ -1,4 +1,5 @@
-import { useState, type FormEvent, type CSSProperties } from 'react'
+import { useState, type FormEvent, type CSSProperties, type ClipboardEvent, type DragEvent } from 'react'
+import { recordSignal } from '../anticheat/telemetry'
 
 type SubmitResult = 'correct' | 'incorrect' | 'duplicate' | 'locked' | 'not_live'
 
@@ -46,10 +47,35 @@ export default function FlagInput({ onSubmit, onCorrect, onWrong, color, glow }:
     }
   }
 
+  // HARD RULE: the answer must be TYPED. Intercept every paste / clipboard /
+  // text-drop path (covers Ctrl+V, Cmd+V, context-menu Paste, drag-drop) and
+  // record a coarse anti-cheat signal (never the clipboard contents). This is an
+  // interaction restriction only — the server remains authoritative.
+  const blockPaste = (e: ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault()
+    recordSignal('PASTE_ATTEMPT')
+  }
+  const blockDrop = (e: DragEvent<HTMLInputElement>) => {
+    e.preventDefault()
+    recordSignal('DROP_TEXT_ATTEMPT')
+  }
+  const blockDragOver = (e: DragEvent<HTMLInputElement>) => {
+    e.preventDefault()
+  }
+  const blockCopyCut = (e: ClipboardEvent<HTMLInputElement>) => {
+    // Don't let the answer be lifted off the field either.
+    e.preventDefault()
+    recordSignal(e.type === 'cut' ? 'CUT_ATTEMPT' : 'COPY_ATTEMPT')
+  }
+
   return (
     <>
       <style>{`
         .flag-input-wrap { position: relative; width: 100%; max-width: 600px; }
+        .flag-input__note {
+          margin: 0.5rem 0 0; font-family: var(--mono-font, "Space Mono", monospace);
+          font-size: 0.68rem; letter-spacing: 0.06em; color: var(--text-muted, #888);
+        }
         .flag-status { 
           display: inline-flex; align-items: center; gap: 8px;
           font-family: var(--mono-font, "Space Mono", monospace); font-size: 0.75rem; letter-spacing: 0.1em;
@@ -210,8 +236,18 @@ export default function FlagInput({ onSubmit, onCorrect, onWrong, color, glow }:
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={blockPaste}
+            onDrop={blockDrop}
+            onDragOver={blockDragOver}
+            onCopy={blockCopyCut}
+            onCut={blockCopyCut}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             placeholder="DOOM{...}"
             className="flag-input__field"
+            aria-describedby="flag-input-note"
             disabled={status === 'checking' || status === 'success'}
           />
           <button
@@ -222,6 +258,10 @@ export default function FlagInput({ onSubmit, onCorrect, onWrong, color, glow }:
             {status === 'success' ? '✓' : 'EXECUTE'}
           </button>
         </form>
+
+        <p id="flag-input-note" className="flag-input__note">
+          Type your answer manually — paste is disabled.
+        </p>
       </div>
     </>
   )

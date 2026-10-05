@@ -5,6 +5,7 @@ import WebSocket from 'ws';
 import {
   makeApp, resetState, registerPlayer, createTeam, joinTeam, startEventAsAdmin, loginAdmin,
 } from './helpers.js';
+import { solveChallenge } from './instance-helpers.js';
 
 const WV01 = 'DOOM{a3f19c2b}';
 
@@ -52,8 +53,8 @@ function connect(path: string, cookie?: string): Promise<Client> {
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function solve(cookie: string, challengeId = 'wv-01', flag = WV01) {
-  return app.inject({ method: 'POST', url: '/api/submissions', headers: { cookie }, payload: { challengeId, flag } });
+async function solve(cookie: string, challengeId = 'wv-01') {
+  return solveChallenge(app, cookie, challengeId);
 }
 
 describe('realtime — player team channel', () => {

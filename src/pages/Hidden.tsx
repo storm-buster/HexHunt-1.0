@@ -4,10 +4,13 @@ import { useGame } from '../contexts/GameContext'
 import PageTransition from '../components/PageTransition'
 import BattleworldBg from '../components/BattleworldBg'
 import CommandButton from '../components/CommandButton'
+import Watermark from '../components/Watermark'
+import { useAntiCheat } from '../anticheat/useAntiCheat'
 
 export default function Hidden() {
   const navigate = useNavigate()
   const { state, submitHidden } = useGame()
+  useAntiCheat()
   const hidden = state.hidden
   const [answer, setAnswer] = useState('')
   const [busy, setBusy] = useState(false)
@@ -30,6 +33,7 @@ export default function Hidden() {
   return (
     <PageTransition>
       <BattleworldBg variant="boss" />
+      <Watermark />
       <main className="hidden-screen">
         <style>{`
           .hidden-screen { position: relative; z-index: 1; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
